@@ -44,15 +44,25 @@ const userSchema = new mongoose.Schema(
      * city centre. Captured with permission, shown on their profile, and
      * editable there — never inferred behind their back.
      */
+    // `default: undefined` on every field AND on the sub-document itself: with
+    // per-field defaults alone, Mongoose materialises {label:'',accuracy:null}
+    // for a user who has never shared a location, and the 2dsphere index
+    // rejects that as "unknown GeoJSON type". The whole object must be absent.
     lastKnownLocation: {
-      type: { type: String, enum: ['Point'], default: undefined },
-      coordinates: { type: [Number], default: undefined }, // [lng, lat]
-      label: { type: String, default: '' },
-      // The full postal string from reverse geocoding, so the patient can
-      // confirm we have the right place rather than trusting two numbers.
-      formatted: { type: String, default: '' },
-      accuracy: { type: Number, default: null },
-      updatedAt: { type: Date, default: null },
+      type: new mongoose.Schema(
+        {
+          type: { type: String, enum: ['Point'], required: true },
+          coordinates: { type: [Number], required: true }, // [lng, lat]
+          label: { type: String, default: '' },
+          // The full postal string from reverse geocoding, so the patient can
+          // confirm we have the right place rather than trusting two numbers.
+          formatted: { type: String, default: '' },
+          accuracy: { type: Number, default: null },
+          updatedAt: { type: Date, default: null },
+        },
+        { _id: false },
+      ),
+      default: undefined,
     },
 
     lastLoginAt: Date,
