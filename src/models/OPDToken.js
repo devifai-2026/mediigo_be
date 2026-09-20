@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import { TOKEN_STATUS, VISIT_TYPE, TOKEN_SOURCE } from '../config/constants.js';
+import { TOKEN_STATUS, VISIT_TYPE, TOKEN_SOURCE, SHIFT } from '../config/constants.js';
 
 const opdTokenSchema = new mongoose.Schema(
   {
@@ -22,6 +22,12 @@ const opdTokenSchema = new mongoose.Schema(
       gender: String,
       complaint: String,
     },
+
+    // Which sitting this token belongs to. Token numbers restart per shift, so
+    // a doctor's evening list is not numbered on from the morning's.
+    shift: { type: String, enum: Object.values(SHIFT), default: SHIFT.MORNING },
+    startTime: { type: String, default: '' },
+    endTime: { type: String, default: '' },
 
     visitType: { type: String, enum: Object.values(VISIT_TYPE), default: VISIT_TYPE.FRESH },
     source: { type: String, enum: Object.values(TOKEN_SOURCE), default: TOKEN_SOURCE.APP },
@@ -46,6 +52,16 @@ const opdTokenSchema = new mongoose.Schema(
     skipReason: String,
     recallCount: { type: Number, default: 0 },
 
+    // Set when a doctor goes off after this was booked. The token keeps its
+    // place in RESCHEDULE_NEEDED until the patient picks a new slot, so nobody
+    // is silently moved and nobody silently loses their booking.
+    rescheduleReason: { type: String, default: null },
+    rescheduledFrom: {
+      date: String,
+      shift: String,
+      tokenNumber: Number,
+    },
+
     transactionId: { type: mongoose.Schema.Types.ObjectId, ref: 'Transaction', default: null },
     isPaid: { type: Boolean, default: false },
     bookedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
@@ -56,7 +72,7 @@ const opdTokenSchema = new mongoose.Schema(
 // The spec's compound unique index. Used here as an optimistic-concurrency
 // primitive, not merely a constraint: it is the backstop that guarantees no two
 // patients can ever hold the same token number for a doctor on a given day.
-opdTokenSchema.index({ doctorId: 1, date: 1, tokenNumber: 1 }, { unique: true });
+opdTokenSchema.index({ doctorId: 1, date: 1, shift: 1, tokenNumber: 1 }, { unique: true });
 opdTokenSchema.index({ doctorId: 1, date: 1, status: 1 });
 opdTokenSchema.index({ patientId: 1, createdAt: -1 });
 opdTokenSchema.index({ hospitalId: 1, date: 1 });

@@ -38,6 +38,20 @@ const userSchema = new mongoose.Schema(
     districtId: { type: mongoose.Schema.Types.ObjectId, ref: 'District', default: null },
     doctorId: { type: mongoose.Schema.Types.ObjectId, ref: 'Doctor', default: null },
 
+    /**
+     * Where the patient last told us they are, so a returning visit ranks
+     * clinics by real distance instead of silently measuring from a hardcoded
+     * city centre. Captured with permission, shown on their profile, and
+     * editable there — never inferred behind their back.
+     */
+    lastKnownLocation: {
+      type: { type: String, enum: ['Point'], default: undefined },
+      coordinates: { type: [Number], default: undefined }, // [lng, lat]
+      label: { type: String, default: '' },
+      accuracy: { type: Number, default: null },
+      updatedAt: { type: Date, default: null },
+    },
+
     lastLoginAt: Date,
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   },
@@ -55,6 +69,7 @@ userSchema.index(
 userSchema.index({ role: 1, hospitalId: 1 });
 userSchema.index({ role: 1, districtId: 1 });
 userSchema.index({ 'familyMembers.aadhaarHash': 1 }, { sparse: true });
+userSchema.index({ lastKnownLocation: '2dsphere' }, { sparse: true });
 
 userSchema.methods.toSafeJSON = function toSafeJSON() {
   const o = this.toObject({ virtuals: true });

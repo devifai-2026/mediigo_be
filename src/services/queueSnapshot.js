@@ -17,7 +17,7 @@ export const buildQueueSnapshot = async (doctorId, date, { includePii = false } 
   const [doctor, tokens] = await Promise.all([
     Doctor.findById(doctorId).select('name chamberNumber avgConsultMinutes session hospitalId').lean(),
     OPDToken.find({ doctorId, date })
-      .select('tokenNumber status patientSnapshot patientId calledAt completedAt skipReason visitType')
+      .select('tokenNumber status patientSnapshot patientId calledAt completedAt skipReason visitType shift startTime endTime')
       .sort({ tokenNumber: 1 })
       .lean(),
   ]);
@@ -81,7 +81,15 @@ export const buildQueueSnapshot = async (doctorId, date, { includePii = false } 
       isEmergency: t.visitType === VISIT_TYPE.EMERGENCY,
       // Public displays get a masked name; staff clients get the real one.
       name: includePii ? t.patientSnapshot?.name ?? '' : maskName(t.patientSnapshot?.name),
-      ...(includePii ? { patientId: String(t.patientId), phone: t.patientSnapshot?.phone } : {}),
+      // Age and gender are clinical context, not identity — a waiting-room
+      // board showing "34 F" next to a masked name is still anonymous.
+      age: t.patientSnapshot?.age ?? null,
+      gender: t.patientSnapshot?.gender ?? null,
+      // Staff only: the reason for the visit is clinical detail and has no
+      // business on a public waiting-room display.
+      ...(includePii
+        ? { patientId: String(t.patientId), phone: t.patientSnapshot?.phone, complaint: t.patientSnapshot?.complaint ?? '' }
+        : {}),
       skipReason: t.skipReason ?? null,
     })),
     // Monotonic within a doctor-day: the number of state transitions so far.

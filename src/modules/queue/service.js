@@ -1,7 +1,8 @@
 import mongoose from 'mongoose';
 import { Doctor, Hospital, OPDToken, Transaction, User } from '../../models/index.js';
 import { nextSequence, tokenCounterId } from '../../lib/counters.js';
-import { clinicDate, endOfClinicDay, addMinutes, jitterDelay, sleep } from '../../lib/dates.js';
+import { clinicDate, endOfClinicDay, addMinutes, jitterDelay, sleep, ageFrom } from '../../lib/dates.js';
+import { resolveBookableShift } from '../../services/availability.js';
 import { conflict, notFound, validationError, isDuplicateKey } from '../../lib/errors.js';
 import { assertDoctorScope, assertTokenScope, assertHospitalScope } from '../../middleware/rbac.js';
 import { buildQueueSnapshot } from '../../services/queueSnapshot.js';
@@ -187,16 +188,36 @@ export const setBookingOpen = async ({ doctorId, isOpen, actor }) => {
  * Patient app booking — unpaid, so no Transaction. Uses the same counter
  * allocation and retry loop as the POS.
  */
-export const bookToken = async ({ doctorId, patientId, familyMemberId, visitType = 'fresh', actor }) => {
+export const bookToken = async ({ doctorId, patientId, familyMemberId, visitType = 'fresh', date: wantedDate, shift: wantedShift, complaint, actor }) => {
   const { doctor, hospital } = await loadDoctorAndHospital(doctorId);
   if (hospital.networkState !== NETWORK_STATE.ACTIVE) {
     throw conflict('This clinic is not accepting bookings', RESPONSE_CODES.HOSPITAL_NOT_ACTIVE);
   }
-  if (!doctor.session?.isBookingOpen) {
+
+  const today = clinicDate(hospital.timezone);
+  const date = wantedDate || today;
+
+  // isBookingOpen is a live switch for the doctor sitting right now, so it can
+  // only gate today. A future date is governed by the schedule instead — a
+  // doctor who has not opened this morning's queue is still sitting on Friday.
+  if (date === today && !wantedShift && !doctor.session?.isBookingOpen && !(doctor.schedule || []).length) {
     throw conflict('Bookings are closed for this doctor', RESPONSE_CODES.BOOKING_CLOSED);
   }
 
-  const date = clinicDate(hospital.timezone);
+  // A doctor with no schedule configured keeps the old walk-in behaviour, so
+  // this rolls out without stranding clinics that have not set shifts yet.
+  let shift = null;
+  let shiftTimes = { startTime: '', endTime: '' };
+  if ((doctor.schedule || []).length || (doctor.scheduleOverrides || []).length) {
+    const resolved = await resolveBookableShift({ doctor, date, shift: wantedShift, timezone: hospital.timezone });
+    if (!resolved.ok) throw conflict(resolved.reason, RESPONSE_CODES.BOOKING_CLOSED);
+    shift = resolved.shift.shift;
+    shiftTimes = { startTime: resolved.shift.startTime, endTime: resolved.shift.endTime };
+  } else if (date !== today) {
+    throw conflict('This doctor has no schedule set, so only same-day booking is available', RESPONSE_CODES.BOOKING_CLOSED);
+  } else if (!doctor.session?.isBookingOpen) {
+    throw conflict('Bookings are closed for this doctor', RESPONSE_CODES.BOOKING_CLOSED);
+  }
   const patient = await User.findById(patientId).lean();
   if (!patient) throw notFound('Patient not found');
 
@@ -210,17 +231,24 @@ export const bookToken = async ({ doctorId, patientId, familyMemberId, visitType
       let created;
       // eslint-disable-next-line no-await-in-loop
       await session.withTransaction(async () => {
-        const tokenNumber = await nextSequence(tokenCounterId(doctor._id, date), session, {
+        const tokenNumber = await nextSequence(tokenCounterId(doctor._id, date, shift), session, {
+          // Anchored to the token's own date, so a counter for a future sitting
+          // is not swept away before that day arrives.
           expiresAt: endOfClinicDay(date, hospital.timezone),
         });
         const [token] = await OPDToken.create(
           [{
-            tokenNumber, date, doctorId: doctor._id, hospitalId: hospital._id, patientId: patient._id,
+            tokenNumber, date, shift: shift ?? undefined, ...shiftTimes,
+            doctorId: doctor._id, hospitalId: hospital._id, patientId: patient._id,
             familyMemberId: member?._id ?? null,
             patientSnapshot: {
               name: member?.name || patient.name,
               phone: patient.phone,
               gender: member?.gender || patient.gender,
+              // Frozen at booking: the roster shows the age they were seen at,
+              // and a dob edited later must not rewrite an old consultation.
+              age: ageFrom(member?.dob || patient.dob),
+              complaint: complaint?.trim() || '',
             },
             visitType, source: TOKEN_SOURCE.APP, status: TOKEN_STATUS.WAITING,
             statusHistory: [{ from: null, to: TOKEN_STATUS.WAITING, at: new Date(), byUserId: actor?.id }],

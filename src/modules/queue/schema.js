@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { TOKEN_STATUS, VISIT_TYPE, BREAK_REASONS, BREAK_DURATIONS } from '../../config/constants.js';
+import { TOKEN_STATUS, VISIT_TYPE, BREAK_REASONS, BREAK_DURATIONS, SHIFT } from '../../config/constants.js';
 
 export const queryDate = {
   query: z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() }),
@@ -21,11 +21,26 @@ export const breakSchema = {
   }),
 };
 
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
 export const bookSchema = {
   body: z.object({
     doctorId: z.string().min(1),
     familyMemberId: z.string().optional().nullable(),
     visitType: z.enum(Object.values(VISIT_TYPE)).default(VISIT_TYPE.FRESH),
+    // Omitted means today, which keeps every existing walk-in caller working.
+    date: z.string().regex(DATE_RE, 'Expected YYYY-MM-DD').optional(),
+    shift: z.enum(Object.values(SHIFT)).optional(),
+    // Why they are coming in. Optional — a patient who does not want to say
+    // must still be able to book — but it is what the doctor reads first.
+    complaint: z.string().trim().max(300).optional(),
+  }),
+};
+
+export const rescheduleSchema = {
+  body: z.object({
+    date: z.string().regex(DATE_RE, 'Expected YYYY-MM-DD'),
+    shift: z.enum(Object.values(SHIFT)),
   }),
 };
 

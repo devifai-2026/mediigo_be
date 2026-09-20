@@ -256,6 +256,8 @@ export const createWalkin = async ({ body, actor, ip, userAgent }) => {
 export const payForToken = async ({ tokenId, body, actor, ip, userAgent }) => {
   const token = await OPDToken.findById(tokenId);
   if (!token) throw notFound('Token not found');
+  // Pay-once. Also guaranteed by the unique index on tokenId, but failing here
+  // gives the desk a sentence instead of a duplicate-key error.
   if (token.isPaid) throw conflict('This token has already been paid');
 
   const [hospital, doctor] = await Promise.all([
@@ -263,6 +265,11 @@ export const payForToken = async ({ tokenId, body, actor, ip, userAgent }) => {
     Doctor.findById(token.doctorId).lean(),
   ]);
   assertHospitalScope(actor, hospital);
+  // A doctor collecting in the chamber may only take money for their own
+  // patients — the clinic gate alone would let them bill a colleague's token.
+  if (actor.role === ROLES.DOCTOR && String(actor.doctorId) !== String(token.doctorId)) {
+    throw conflict('You can only take payment for your own patients');
+  }
 
   const fy = financialYear(token.date);
   const baseFee = doctor.fees[token.visitType];

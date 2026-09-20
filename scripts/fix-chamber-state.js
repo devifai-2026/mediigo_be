@@ -87,6 +87,27 @@ const run = async () => {
     log('index one_in_chamber_per_doctor_per_day: would create');
   }
 
+  // ---- 4. Retire the pre-shift token index --------------------------------
+  // Token numbers now restart per sitting, so uniqueness is per doctor+date+
+  // SHIFT. Mongo does not drop the old narrower index on its own, and while it
+  // survives it rejects evening #1 as a duplicate of morning #1.
+  const existing = await tokens.indexes();
+  const legacy = existing.find((i) => i.name === 'doctorId_1_date_1_tokenNumber_1');
+  if (legacy) {
+    log('legacy index doctorId_1_date_1_tokenNumber_1: present');
+    if (APPLY) {
+      const replacement = existing.find((i) => i.name === 'doctorId_1_date_1_shift_1_tokenNumber_1');
+      if (!replacement) {
+        await tokens.createIndex({ doctorId: 1, date: 1, shift: 1, tokenNumber: 1 }, { unique: true });
+        log('  created shift-aware replacement first');
+      }
+      await tokens.dropIndex('doctorId_1_date_1_tokenNumber_1');
+      log('  dropped');
+    }
+  } else {
+    log('legacy index doctorId_1_date_1_tokenNumber_1: already gone');
+  }
+
   log(APPLY ? '\ndone\n' : '\ndry run — re-run with --apply to write\n');
   await mongoose.disconnect();
 };

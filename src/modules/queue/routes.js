@@ -5,7 +5,7 @@ import { validate } from '../../middleware/validate.js';
 import { requireAuth, optionalAuth, requireActiveUser } from '../../middleware/auth.js';
 import { requireRole } from '../../middleware/rbac.js';
 import { ROLES } from '../../config/constants.js';
-import { queryDate, statusSchema, breakSchema, bookSchema, bookingOpenSchema } from './schema.js';
+import { queryDate, statusSchema, breakSchema, bookSchema, bookingOpenSchema, rescheduleSchema } from './schema.js';
 
 export const queueRoutes = Router();
 
@@ -61,4 +61,16 @@ queueRoutes.delete(
   '/tokens/:tokenId',
   requireAuth, asyncHandler(requireActiveUser),
   asyncHandler(controller.cancel),
+);
+
+// ---- Reschedule: a doctor went off and this patient must move ----
+queueRoutes.get(
+  '/tokens/:tokenId/reschedule-options',
+  requireAuth, asyncHandler(requireActiveUser),
+  asyncHandler(controller.rescheduleChoices),
+);
+queueRoutes.post(
+  '/tokens/:tokenId/reschedule',
+  requireAuth, asyncHandler(requireActiveUser),
+  validate(rescheduleSchema), asyncHandler(controller.reschedule),
 );

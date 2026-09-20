@@ -13,12 +13,20 @@ import { ROLES } from '../../config/constants.js';
 export const patientRoutes = Router();
 patientRoutes.use(requireAuth, asyncHandler(requireActiveUser));
 
+// Age and gender are required for anyone who can be booked: a doctor reading
+// the roster needs them, and a paediatric or gynaecology token is meaningless
+// without them. Stored as dob so the age stays right next year.
+const notFuture = (d) => d.getTime() <= Date.now();
+const plausibleDob = (d) => d.getFullYear() > new Date().getFullYear() - 130;
+
 const memberSchema = {
   body: z.object({
     name: z.string().trim().min(1).max(80),
     relation: z.enum(['SELF', 'SPOUSE', 'CHILD', 'PARENT', 'SIBLING', 'OTHER']),
-    dob: z.coerce.date().optional(),
-    gender: z.enum(['M', 'F', 'O']).optional(),
+    dob: z.coerce.date({ required_error: 'Date of birth is required' })
+      .refine(notFuture, 'Date of birth cannot be in the future')
+      .refine(plausibleDob, 'Enter a valid date of birth'),
+    gender: z.enum(['M', 'F', 'O'], { required_error: 'Gender is required' }),
     phone: z.string().optional(),
   }),
 };
@@ -26,7 +34,11 @@ const memberSchema = {
 const profileSchema = {
   body: z.object({
     name: z.string().trim().min(1).max(80).optional(),
-    dob: z.coerce.date().optional(),
+    // Optional here because this is a PATCH — but a value sent must be sane.
+    dob: z.coerce.date()
+      .refine(notFuture, 'Date of birth cannot be in the future')
+      .refine(plausibleDob, 'Enter a valid date of birth')
+      .optional(),
     gender: z.enum(['M', 'F', 'O']).optional(),
     email: z.string().email().optional(),
     aadhaarNumber: z.string().min(12).max(14).optional(),
@@ -56,6 +68,40 @@ patientRoutes.patch('/me', validate(profileSchema), asyncHandler(async (req, res
   delete user.passwordHash;
   res.json({ ok: true, data: user });
 }));
+
+// Where the patient is, so nearby search measures from them rather than a
+// hardcoded city centre. They can see and change it on their profile.
+patientRoutes.patch(
+  '/me/location',
+  validate({
+    body: z.object({
+      lat: z.coerce.number().min(-90).max(90),
+      lng: z.coerce.number().min(-180).max(180),
+      label: z.string().max(120).optional(),
+      accuracy: z.coerce.number().min(0).optional(),
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    const { lat, lng, label, accuracy } = req.body;
+    const user = await User.findByIdAndUpdate(
+      req.user.id,
+      {
+        $set: {
+          lastKnownLocation: {
+            type: 'Point',
+            coordinates: [lng, lat],
+            label: label ?? '',
+            accuracy: accuracy ?? null,
+            updatedAt: new Date(),
+          },
+        },
+      },
+      { new: true },
+    );
+    if (!user) throw notFound('Patient not found');
+    res.json({ ok: true, data: user.lastKnownLocation });
+  }),
+);
 
 patientRoutes.get('/me/family', asyncHandler(async (req, res) => {
   const user = await User.findById(req.user.id).select('familyMembers').lean();

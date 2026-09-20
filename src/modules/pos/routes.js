@@ -17,9 +17,12 @@ posRoutes.post(
   validate(walkinSchema),
   asyncHandler(controller.walkin),
 );
+// A doctor may collect too — some clinics take the money in the chamber rather
+// than at the desk. Who actually took it is recorded on the transaction, and
+// day-close reconciles per collector, so both routes stay auditable.
 posRoutes.post(
   '/tokens/:tokenId/pay',
-  requireRole(ROLES.RECEPTIONIST, ROLES.SUPER_ADMIN),
+  requireRole(ROLES.RECEPTIONIST, ROLES.DOCTOR, ROLES.SUPER_ADMIN),
   validate(paySchema),
   asyncHandler(controller.pay),
 );

@@ -21,7 +21,10 @@ export const nextSequence = async (id, session, { expiresAt } = {}) => {
   return doc.seq;
 };
 
-export const tokenCounterId = (doctorId, date) => `token:${doctorId}:${date}`;
+// Token numbers restart per sitting, so the evening list is not numbered on
+// from the morning's. Legacy ids (no shift) are left addressable for old data.
+export const tokenCounterId = (doctorId, date, shift) =>
+  (shift ? `token:${doctorId}:${date}:${shift}` : `token:${doctorId}:${date}`);
 export const receiptCounterId = (hospitalId, fy) => `receipt:${hospitalId}:${fy}`;
 
 export const formatReceipt = (prefix, hospitalCode, fy, seq) =>

@@ -33,11 +33,27 @@ export const TOKEN_STATUS = {
   IN_CHAMBER: 'IN_CHAMBER',
   COMPLETED: 'COMPLETED',
   SKIPPED: 'SKIPPED',
+  // The doctor went off after this was booked. The token is held, not
+  // cancelled — the patient chooses a new slot rather than losing their place.
+  RESCHEDULE_NEEDED: 'RESCHEDULE_NEEDED',
+  CANCELLED: 'CANCELLED',
 };
 
 // Statuses that mean a patient is physically still in the building. The deboard
 // guard counts exactly these.
 export const IN_FLIGHT_STATUSES = [TOKEN_STATUS.WAITING, TOKEN_STATUS.IN_CHAMBER];
+
+// How far ahead a patient may book. Seven days keeps the calendar honest: a
+// doctor's shifts are only meaningfully predictable about that far out.
+export const BOOKING_HORIZON_DAYS = 7;
+
+// A named half of the day. Shifts carry real times; this labels them so a
+// patient reading "Morning" and a doctor marking one off mean the same thing.
+export const SHIFT = {
+  MORNING: 'MORNING',
+  AFTERNOON: 'AFTERNOON',
+  EVENING: 'EVENING',
+};
 
 export const STANDEE_STATUS = {
   UNASSIGNED: 'UNASSIGNED',

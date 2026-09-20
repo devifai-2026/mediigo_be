@@ -5,7 +5,7 @@ import { validate } from '../../middleware/validate.js';
 import { requireAuth, optionalAuth, requireActiveUser } from '../../middleware/auth.js';
 import { requireRole } from '../../middleware/rbac.js';
 import { ROLES } from '../../config/constants.js';
-import { nearbySchema, feesSchema, profileSchema } from './schema.js';
+import { nearbySchema, feesSchema, profileSchema, scheduleSchema, markOffSchema } from './schema.js';
 
 export const doctorRoutes = Router();
 
@@ -31,4 +31,29 @@ doctorRoutes.patch(
   requireAuth, asyncHandler(requireActiveUser),
   requireRole(ROLES.DOCTOR, ROLES.EXEC_ADMIN, ROLES.SUPER_ADMIN),
   validate(profileSchema), asyncHandler(controller.updateProfile),
+);
+
+// ---- Scheduling ----
+// Public: a patient picking a date needs this before they sign in.
+doctorRoutes.get('/:id/availability', optionalAuth, asyncHandler(controller.availability));
+
+doctorRoutes.put(
+  '/:id/schedule',
+  requireAuth, asyncHandler(requireActiveUser),
+  requireRole(ROLES.DOCTOR, ROLES.RECEPTIONIST, ROLES.EXEC_ADMIN, ROLES.SUPER_ADMIN),
+  validate(scheduleSchema), asyncHandler(controller.updateSchedule),
+);
+
+// The clinic's front desk marks a doctor off as often as the doctor does.
+doctorRoutes.post(
+  '/:id/off',
+  requireAuth, asyncHandler(requireActiveUser),
+  requireRole(ROLES.DOCTOR, ROLES.RECEPTIONIST, ROLES.EXEC_ADMIN, ROLES.SUPER_ADMIN),
+  validate(markOffSchema), asyncHandler(controller.markOff),
+);
+doctorRoutes.post(
+  '/:id/off/clear',
+  requireAuth, asyncHandler(requireActiveUser),
+  requireRole(ROLES.DOCTOR, ROLES.RECEPTIONIST, ROLES.EXEC_ADMIN, ROLES.SUPER_ADMIN),
+  validate(markOffSchema), asyncHandler(controller.clearOff),
 );
