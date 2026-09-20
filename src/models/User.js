@@ -1,0 +1,65 @@
+import mongoose from 'mongoose';
+import { ROLES } from '../config/constants.js';
+
+const familyMemberSchema = new mongoose.Schema(
+  {
+    name: { type: String, required: true, trim: true },
+    relation: { type: String, enum: ['SELF', 'SPOUSE', 'CHILD', 'PARENT', 'SIBLING', 'OTHER'], default: 'OTHER' },
+    dob: Date,
+    gender: { type: String, enum: ['M', 'F', 'O'] },
+    aadhaarHash: { type: String, default: null },
+    phone: String,
+  },
+  { _id: true, timestamps: false },
+);
+
+const userSchema = new mongoose.Schema(
+  {
+    phone: { type: String, required: true, trim: true },
+    name: { type: String, required: true, trim: true },
+    email: { type: String, lowercase: true, trim: true, default: null },
+    role: { type: String, enum: Object.values(ROLES), required: true },
+
+    aadhaarHash: { type: String, default: null },
+    dob: Date,
+    gender: { type: String, enum: ['M', 'F', 'O'] },
+    familyMembers: { type: [familyMemberSchema], default: [] },
+
+    // Staff only. Patients are OTP-only and never receive one.
+    passwordHash: { type: String, default: null, select: false },
+    // Per-user override of the role-level 2FA policy set by Super Admin.
+    twoFactorEnabled: { type: Boolean, default: false },
+
+    isActive: { type: Boolean, default: true },
+
+    // Scope anchors — the entire RBAC scope system reads these, and they are
+    // copied into the JWT so scope checks cost no DB reads.
+    hospitalId: { type: mongoose.Schema.Types.ObjectId, ref: 'Hospital', default: null },
+    districtId: { type: mongoose.Schema.Types.ObjectId, ref: 'District', default: null },
+    doctorId: { type: mongoose.Schema.Types.ObjectId, ref: 'Doctor', default: null },
+
+    lastLoginAt: Date,
+    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+  },
+  { timestamps: true },
+);
+
+userSchema.index({ phone: 1 }, { unique: true });
+// One Aadhaar is one human — but only enforced for PATIENT primaries. A family
+// member may later register in their own right, and blocking that is a support
+// nightmare, so the subdoc index below is deliberately non-unique.
+userSchema.index(
+  { aadhaarHash: 1 },
+  { unique: true, partialFilterExpression: { aadhaarHash: { $type: 'string' }, role: ROLES.PATIENT } },
+);
+userSchema.index({ role: 1, hospitalId: 1 });
+userSchema.index({ role: 1, districtId: 1 });
+userSchema.index({ 'familyMembers.aadhaarHash': 1 }, { sparse: true });
+
+userSchema.methods.toSafeJSON = function toSafeJSON() {
+  const o = this.toObject({ virtuals: true });
+  delete o.passwordHash;
+  return o;
+};
+
+export const User = mongoose.model('User', userSchema);
