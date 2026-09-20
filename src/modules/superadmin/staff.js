@@ -71,6 +71,110 @@ export const listStaff = async ({ role, includeInactive = true }) => {
   }));
 };
 
+/**
+ * One person's full record for the profile page. listStaff deliberately returns
+ * only counts — this fills in what those counts are made of, so the page can
+ * show the actual clinics, submissions and activity rather than a number.
+ */
+export const staffProfile = async (userId) => {
+  if (!mongoose.isValidObjectId(userId)) throw notFound('User not found');
+
+  const user = await User.findById(userId)
+    .populate('districtId', 'name code state cityTier')
+    .populate('hospitalId', 'name code address networkState')
+    .populate('createdBy', 'name role')
+    .lean();
+
+  assertManaged(user);
+
+  const base = {
+    id: String(user._id),
+    name: user.name,
+    phone: user.phone,
+    email: user.email ?? null,
+    role: user.role,
+    isActive: user.isActive,
+    districtId: user.districtId ? String(user.districtId._id) : null,
+    districtName: user.districtId?.name ?? null,
+    districtCode: user.districtId?.code ?? null,
+    districtState: user.districtId?.state ?? null,
+    hospitalName: user.hospitalId?.name ?? null,
+    hospitalAddress: user.hospitalId?.address ?? null,
+    hospitalState: user.hospitalId?.networkState ?? null,
+    lastLoginAt: user.lastLoginAt ?? null,
+    createdAt: user.createdAt,
+    createdByName: user.createdBy?.name ?? null,
+  };
+
+  // Recent actions taken BY this person. Indexed on { actorId, createdAt }.
+  const activityDocs = await AuditLog.find({ actorId: user._id })
+    .sort({ createdAt: -1 })
+    .limit(20)
+    .select('action entityType reason createdAt')
+    .lean();
+
+  const activity = activityDocs.map((a) => ({
+    action: a.action,
+    entityType: a.entityType ?? null,
+    reason: a.reason ?? null,
+    at: a.createdAt,
+  }));
+
+  // Why they were retired, if they were — the reason lives on the audit entry,
+  // not the user record.
+  let deactivation = null;
+  if (!user.isActive) {
+    const entry = await AuditLog.findOne({ entityType: 'User', entityId: user._id, action: AUDIT_ACTIONS.USER_DEACTIVATED })
+      .sort({ createdAt: -1 })
+      .populate('actorId', 'name')
+      .lean();
+    if (entry) deactivation = { reason: entry.reason ?? null, at: entry.createdAt, byName: entry.actorId?.name ?? null };
+  }
+
+  const profile = { ...base, activity, deactivation };
+
+  if (user.role === ROLES.EXEC_ADMIN) {
+    const districtId = user.districtId?._id ?? null;
+    const [clinics, agents, load] = await Promise.all([
+      districtId
+        ? Hospital.find({ districtId }).select('name code networkState address').sort({ name: 1 }).limit(50).lean()
+        : [],
+      districtId
+        ? User.find({ districtId, role: ROLES.FIELD_AGENT }).select('name phone isActive').sort({ name: 1 }).lean()
+        : [],
+      districtLoad(districtId),
+    ]);
+    profile.load = load;
+    profile.clinics = clinics.map((h) => ({
+      id: String(h._id), name: h.name, code: h.code ?? null,
+      networkState: h.networkState, address: h.address ?? null,
+    }));
+    profile.agents = agents.map((a) => ({ id: String(a._id), name: a.name, phone: a.phone, isActive: a.isActive }));
+  }
+
+  if (user.role === ROLES.FIELD_AGENT) {
+    const submissions = await OnboardingSubmission.find({ agentId: user._id })
+      .select('clinicName status createdAt')
+      .sort({ createdAt: -1 })
+      .limit(50)
+      .lean();
+    const byStatus = submissions.reduce((acc, s) => ({ ...acc, [s.status]: (acc[s.status] ?? 0) + 1 }), {});
+    profile.load = {
+      submissions: await OnboardingSubmission.countDocuments({ agentId: user._id }),
+      pendingSubmissions: await OnboardingSubmission.countDocuments({
+        agentId: user._id, status: { $in: ['SUBMITTED', 'UNDER_REVIEW'] },
+      }),
+      approved: byStatus.APPROVED ?? 0,
+      rejected: byStatus.REJECTED ?? 0,
+    };
+    profile.submissions = submissions.map((s) => ({
+      id: String(s._id), clinicName: s.clinicName ?? '—', status: s.status, at: s.createdAt,
+    }));
+  }
+
+  return profile;
+};
+
 export const createStaff = async ({ body, actor, ip, userAgent }) => {
   const phone = last10Digits(body.phone);
   if (!isValidIndianMobile(phone)) {

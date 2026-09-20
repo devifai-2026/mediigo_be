@@ -78,6 +78,10 @@ superadminRoutes.get('/staff', asyncHandler(async (req, res) => {
   res.json({ ok: true, data: await staff.listStaff({ role: req.query.role }) });
 }));
 
+superadminRoutes.get('/staff/:id', asyncHandler(async (req, res) => {
+  res.json({ ok: true, data: await staff.staffProfile(req.params.id) });
+}));
+
 superadminRoutes.post(
   '/staff',
   validate({
