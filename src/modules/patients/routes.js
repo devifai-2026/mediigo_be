@@ -8,6 +8,7 @@ import { requireRole } from '../../middleware/rbac.js';
 import { notFound } from '../../lib/errors.js';
 import { aadhaarHash, isValidAadhaar } from '../../lib/crypto.js';
 import { backfillPatientLink } from '../policy/service.js';
+import { reverseGeocode } from '../../lib/providers/google-maps.js';
 import { ROLES } from '../../config/constants.js';
 
 export const patientRoutes = Router();
@@ -83,6 +84,18 @@ patientRoutes.patch(
   }),
   asyncHandler(async (req, res) => {
     const { lat, lng, label, accuracy } = req.body;
+    // Turn the coordinates into something a human can verify on their profile.
+    // Best-effort: if Maps is down or unkeyed, the coordinates still stand.
+    let resolvedLabel = label ?? '';
+    let formatted = '';
+    if (!resolvedLabel) {
+      const place = await reverseGeocode({ lat, lng });
+      if (place) {
+        resolvedLabel = place.locality || place.city || '';
+        formatted = place.formatted ?? '';
+      }
+    }
+
     const user = await User.findByIdAndUpdate(
       req.user.id,
       {
@@ -90,7 +103,8 @@ patientRoutes.patch(
           lastKnownLocation: {
             type: 'Point',
             coordinates: [lng, lat],
-            label: label ?? '',
+            label: resolvedLabel,
+            formatted,
             accuracy: accuracy ?? null,
             updatedAt: new Date(),
           },

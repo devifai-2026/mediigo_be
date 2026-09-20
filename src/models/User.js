@@ -48,6 +48,9 @@ const userSchema = new mongoose.Schema(
       type: { type: String, enum: ['Point'], default: undefined },
       coordinates: { type: [Number], default: undefined }, // [lng, lat]
       label: { type: String, default: '' },
+      // The full postal string from reverse geocoding, so the patient can
+      // confirm we have the right place rather than trusting two numbers.
+      formatted: { type: String, default: '' },
       accuracy: { type: Number, default: null },
       updatedAt: { type: Date, default: null },
     },

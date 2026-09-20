@@ -52,6 +52,40 @@ export const geocodeAddress = async ({ line1, line2, city, state, pincode }) => 
   }
 };
 
+/**
+ * Coordinates -> a readable address.
+ *
+ * Used when a patient shares their location: storing bare numbers means their
+ * profile can only ever show "22.76, 88.37", which nobody can sanity-check.
+ * Failure is not fatal — the coordinates are still the useful part.
+ */
+export const reverseGeocode = async ({ lat, lng }) => {
+  if (!realKey()) return null;
+  const url = `${GEOCODE_URL}?latlng=${lat},${lng}&region=${env.GOOGLE_GEOCODE_REGION}&key=${realKey()}`;
+
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    const data = await res.json();
+    if (data.status !== 'OK' || !data.results?.length) {
+      logger.warn({ status: data.status }, 'reverse geocode returned no result');
+      return null;
+    }
+    const best = data.results[0];
+    const part = (type) => best.address_components?.find((c) => c.types.includes(type))?.long_name ?? '';
+    return {
+      formatted: best.formatted_address,
+      placeId: best.place_id,
+      // A short label reads better on a profile than the full postal string.
+      locality: part('sublocality_level_1') || part('locality') || part('administrative_area_level_2'),
+      city: part('locality') || part('administrative_area_level_2'),
+      pincode: part('postal_code'),
+    };
+  } catch (err) {
+    logger.warn({ err: err.message }, 'reverse geocode request failed');
+    return null;
+  }
+};
+
 const chunk = (arr, size) => {
   const out = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));

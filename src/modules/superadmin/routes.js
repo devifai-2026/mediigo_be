@@ -9,10 +9,11 @@ import { getWaSettings, bustWaSettingsCache, getDriver } from '../../lib/provide
 import { hashPassword } from '../auth/service.js';
 import { writeAuditLog } from '../../lib/auditLog.js';
 import { notFound, validationError } from '../../lib/errors.js';
-import { ROLES, NETWORK_STATE, TOKEN_STATUS, AUDIT_ACTIONS } from '../../config/constants.js';
+import { ROLES, NETWORK_STATE, TOKEN_STATUS, AUDIT_ACTIONS, VISIT_TYPE, TOKEN_SOURCE } from '../../config/constants.js';
 import { clinicDate } from '../../lib/dates.js';
 import { getConsole } from './console.js';
 import * as staff from './staff.js';
+import * as patients from './patients.js';
 
 export const superadminRoutes = Router();
 superadminRoutes.use(requireAuth, asyncHandler(requireActiveUser), requireRole(ROLES.SUPER_ADMIN));
@@ -22,6 +23,51 @@ superadminRoutes.use(requireAuth, asyncHandler(requireActiveUser), requireRole(R
 // serving it in a single request avoids 8 round-trips on every tab switch.
 superadminRoutes.get('/console', asyncHandler(async (_req, res) => {
   res.json({ ok: true, data: await getConsole() });
+}));
+
+// ---- Patients master ----
+// The roster, the graphs above it and the drill-down profile. All three read
+// the same filter shape so what the charts describe is exactly what the table
+// lists underneath them.
+const patientFilters = z.object({
+  q: z.string().max(80).optional(),
+  segment: z.enum(['all', 'fresh', 'repeat', 'followup', 'emergency', 'multiclinic']).optional(),
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  hospitalId: z.string().optional().or(z.literal('')),
+  doctorId: z.string().optional().or(z.literal('')),
+  visitType: z.enum(Object.values(VISIT_TYPE)).optional().or(z.literal('')),
+  source: z.enum(Object.values(TOKEN_SOURCE)).optional().or(z.literal('')),
+  status: z.string().optional().or(z.literal('')),
+  page: z.coerce.number().int().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+  sort: z.enum(['recent', 'visits', 'spend', 'name']).optional(),
+});
+
+superadminRoutes.get(
+  '/patients',
+  validate({ query: patientFilters }),
+  asyncHandler(async (req, res) => {
+    res.json({ ok: true, data: await patients.patientsMaster(req.query) });
+  }),
+);
+
+superadminRoutes.get(
+  '/patients/analytics',
+  validate({ query: patientFilters }),
+  asyncHandler(async (req, res) => {
+    res.json({ ok: true, data: await patients.patientsAnalytics(req.query) });
+  }),
+);
+
+superadminRoutes.get('/patients/filters', asyncHandler(async (_req, res) => {
+  res.json({ ok: true, data: await patients.patientFilterOptions() });
+}));
+
+// Registered by id, walk-ins by their `phone:<number>` roster key — so every
+// row in the table opens, account or not.
+superadminRoutes.get('/patients/:key', asyncHandler(async (req, res) => {
+  res.json({ ok: true, data: await patients.patientProfile(req.params.key) });
 }));
 
 // ---- Districts ----

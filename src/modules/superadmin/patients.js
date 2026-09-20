@@ -236,6 +236,7 @@ export const patientsMaster = async (query = {}) => {
             lng: user.lastKnownLocation.coordinates[0],
             lat: user.lastKnownLocation.coordinates[1],
             label: user.lastKnownLocation.label ?? '',
+            formatted: user.lastKnownLocation.formatted ?? '',
             updatedAt: user.lastKnownLocation.updatedAt ?? null,
           }
           : null,
@@ -339,16 +340,19 @@ export const patientsAnalytics = async (query = {}) => {
         },
       },
     ]),
+    // One row per distinct patient. patientId is carried through so a missing
+    // snapshot age can be recovered from the account's date of birth below —
+    // without it every walk-in and every older booking lands in "not stated".
     OPDToken.aggregate([
       { $match: match },
       {
         $group: {
           _id: IDENTITY,
+          patientId: { $first: '$patientId' },
           gender: { $last: '$patientSnapshot.gender' },
           age: { $last: '$patientSnapshot.age' },
         },
       },
-      { $group: { _id: { gender: '$gender', age: '$age' }, n: { $sum: 1 } } },
     ]),
     OPDToken.aggregate([
       {
@@ -376,13 +380,24 @@ export const patientsAnalytics = async (query = {}) => {
   const mix = emptyVisitMix();
   byVisitType.forEach((r) => { if (r._id) mix[r._id] = r.n; });
 
-  // Age bands and gender, derived once from the per-patient demographic pass.
+  // Age bands and gender, one count per distinct patient. The account's dob
+  // outranks the booking snapshot: the snapshot was frozen at booking time and
+  // quietly goes stale, whereas a date of birth never does.
+  const demoUserIds = demographics.map((r) => r.patientId).filter(Boolean);
+  const demoUsers = demoUserIds.length
+    ? await User.find({ _id: { $in: demoUserIds } }).select('dob gender').lean()
+    : [];
+  const demoById = new Map(demoUsers.map((u) => [String(u._id), u]));
+
   const ageBands = Object.fromEntries(AGE_BANDS.map((b) => [b.key, 0]));
   ageBands.unknown = 0;
   const genders = { M: 0, F: 0, O: 0, unknown: 0 };
   demographics.forEach((r) => {
-    ageBands[bandOf(r._id.age ?? null)] += r.n;
-    genders[r._id.gender ?? 'unknown'] = (genders[r._id.gender ?? 'unknown'] ?? 0) + r.n;
+    const u = r.patientId ? demoById.get(String(r.patientId)) : null;
+    const age = ageFrom(u?.dob) ?? r.age ?? null;
+    const gender = u?.gender ?? r.gender ?? 'unknown';
+    ageBands[bandOf(age)] += 1;
+    genders[gender] = (genders[gender] ?? 0) + 1;
   });
 
   const p = perPatient[0] ?? { patients: 0, freshOnly: 0, repeat: 0, loyal: 0, multiClinic: 0, visits: 0 };
@@ -511,7 +526,7 @@ export const patientProfile = async (key) => {
         .limit(200)
         .lean()
       : [],
-    user ? PatientPolicy.find({ patientUserId: user._id }).lean().catch(() => []) : [],
+    user ? PatientPolicy.find({ patientId: user._id, isActive: true }).lean() : [],
   ]);
 
   // Per-clinic and per-doctor breakdown of where this person actually goes.
@@ -598,6 +613,7 @@ export const patientProfile = async (key) => {
         lng: user.lastKnownLocation.coordinates[0],
         lat: user.lastKnownLocation.coordinates[1],
         label: user.lastKnownLocation.label ?? '',
+        formatted: user.lastKnownLocation.formatted ?? '',
         accuracy: user.lastKnownLocation.accuracy ?? null,
         updatedAt: user.lastKnownLocation.updatedAt ?? null,
       }
@@ -630,7 +646,9 @@ export const patientProfile = async (key) => {
       status: t.status,
       source: t.source,
       complaint: t.patientSnapshot?.complaint ?? null,
-      bookedFor: t.familyMemberId ? (t.patientSnapshot?.name ?? 'Family member') : 'Self',
+      // On a family booking the snapshot name IS the member who attended, not
+      // the account holder — so it names who was actually seen.
+      bookedFor: t.familyMemberId ? (t.patientSnapshot?.name || 'Family member') : 'Self',
       isSelf: !t.familyMemberId,
       isPaid: t.isPaid,
       clinicName: t.hospitalId?.name ?? '—',
@@ -663,9 +681,11 @@ export const patientProfile = async (key) => {
     })),
     policies: policies.map((p) => ({
       id: String(p._id),
-      insurer: p.insurer ?? null,
+      insurer: p.insurerName ?? null,
       policyNumber: p.policyNumber ?? null,
-      validTill: p.validTill ?? null,
+      planType: p.planType ?? null,
+      sumInsured: p.sumInsured ?? null,
+      validTill: p.endDate ?? null,
     })),
   };
 };
