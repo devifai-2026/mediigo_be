@@ -1,6 +1,6 @@
 import { OPDToken } from '../models/OPDToken.js';
 import { Doctor } from '../models/Doctor.js';
-import { TOKEN_STATUS } from '../config/constants.js';
+import { TOKEN_STATUS, VISIT_TYPE } from '../config/constants.js';
 import { maskName } from '../lib/logger.js';
 
 /**
@@ -17,7 +17,7 @@ export const buildQueueSnapshot = async (doctorId, date, { includePii = false } 
   const [doctor, tokens] = await Promise.all([
     Doctor.findById(doctorId).select('name chamberNumber avgConsultMinutes session hospitalId').lean(),
     OPDToken.find({ doctorId, date })
-      .select('tokenNumber status patientSnapshot patientId calledAt completedAt skipReason')
+      .select('tokenNumber status patientSnapshot patientId calledAt completedAt skipReason visitType')
       .sort({ tokenNumber: 1 })
       .lean(),
   ]);
@@ -32,13 +32,29 @@ export const buildQueueSnapshot = async (doctorId, date, { includePii = false } 
   const onBreak = Boolean(doctor.session?.isOnBreak);
   const avg = doctor.avgConsultMinutes || 8;
 
+  // tokens is already scoped to `date`, so a match here proves the stored
+  // lastCalledToken belongs to this day's session rather than an earlier one.
+  const lastCalled = doctor.session?.lastCalledToken ?? null;
+  const lastCalledToday = lastCalled && tokens.some((t) => t.tokenNumber === lastCalled) ? lastCalled : null;
+
   return {
     doctorId: String(doctorId),
     doctorName: doctor.name,
     hospitalId: String(doctor.hospitalId),
     chamberNumber: doctor.chamberNumber || '',
     date,
-    currentToken: inChamber?.tokenNumber ?? doctor.session?.lastCalledToken ?? 0,
+    // Falling back to lastCalledToken keeps the board reading "#03" after that
+    // patient is marked complete, instead of snapping back to "#00". But that
+    // field lives on the doctor and carries no date, so yesterday's last call
+    // would otherwise show above today's empty queue. Only trust it when it
+    // names a token from the day being rendered.
+    currentToken: inChamber?.tokenNumber ?? lastCalledToday ?? 0,
+    // Explicit, so no client has to infer "is that number live or finished?"
+    // from the absence of an IN_CHAMBER row and get it wrong on a public board.
+    //   IN_CHAMBER — currentToken is with the doctor right now
+    //   DONE       — that consultation is finished
+    //   IDLE       — nobody has been called into the chamber today
+    chamberState: inChamber ? 'IN_CHAMBER' : lastCalledToday ? 'DONE' : 'IDLE',
     session: {
       isBookingOpen: Boolean(doctor.session?.isBookingOpen),
       isOnBreak: onBreak,
@@ -59,6 +75,10 @@ export const buildQueueSnapshot = async (doctorId, date, { includePii = false } 
       tokenId: String(t._id),
       tokenNumber: t.tokenNumber,
       status: t.status,
+      // Drives the emergency flag in the roster: the front desk and the doctor
+      // both need to see an emergency without opening the row.
+      visitType: t.visitType ?? 'fresh',
+      isEmergency: t.visitType === VISIT_TYPE.EMERGENCY,
       // Public displays get a masked name; staff clients get the real one.
       name: includePii ? t.patientSnapshot?.name ?? '' : maskName(t.patientSnapshot?.name),
       ...(includePii ? { patientId: String(t.patientId), phone: t.patientSnapshot?.phone } : {}),
