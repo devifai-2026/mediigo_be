@@ -6,7 +6,6 @@ import morgan from 'morgan';
 import { env, isProduction } from './config/env.js';
 import { logger } from './lib/logger.js';
 import { requestId } from './middleware/requestId.js';
-import { globalLimiter } from './middleware/rateLimit.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 import { mountRoutes } from './routes.js';
 
@@ -44,27 +43,17 @@ export const createApp = () => {
     app.use(morgan('dev', { stream: { write: (m) => logger.debug(m.trim()) } }));
   }
 
-  // Exempt from the global limiter:
-  //   - health probes, because a rate-limited probe looks like an outage;
-  //   - signing in, because being locked out of the app you are trying to enter
-  //     is the worst possible failure mode, and a 429 on the login screen reads
-  //     as "the app is broken" rather than "slow down".
-  // OTP requests keep their own limiter in auth/routes.js — that one is keyed
-  // by phone number and guards an endpoint that SENDS MESSAGES AND COSTS MONEY,
-  // so it stays.
-  const LIMIT_EXEMPT = new Set([
-    '/healthz',
-    '/readyz',
-    '/api/auth/staff/login',
-    '/api/auth/otp/verify',
-    '/api/auth/refresh',
-    '/api/auth/logout',
-  ]);
-
-  app.use((req, res, next) => {
-    if (LIMIT_EXEMPT.has(req.path)) return next();
-    return globalLimiter(req, res, next);
-  });
+  // Rate limiting is deliberately absent: removed at the product owner's
+  // request so no endpoint ever answers 429.
+  //
+  // Reinstating it means restoring middleware/rateLimit.js, the globalLimiter
+  // mount here, and the per-phone otpLimiter on POST /api/auth/otp/request.
+  // That OTP one is the first to bring back if abuse shows up: the endpoint is
+  // unauthenticated and every call sends a WhatsApp message that costs money,
+  // so without a limit it can be looped to drain the messaging balance.
+  //
+  // trust proxy above stays regardless — req.ip must be the real client for
+  // logging and for any limiter that returns later.
 
   mountRoutes(app);
 
