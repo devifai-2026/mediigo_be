@@ -60,8 +60,16 @@ const schema = z.object({
   NEARBY_MAX_RADIUS_KM: intFrom(50),
   NEARBY_MAX_HOSPITALS: intFrom(40),
 
+  // Proxy hops in front of this service. Render's edge is one; the frontend's
+  // server.js /api proxy is a second. Too low and every proxied request looks
+  // like it came from the same IP, collapsing the whole user base into one rate
+  // limit bucket. Set to 1 if the backend is ever exposed without the frontend
+  // proxy in front of it.
+  TRUST_PROXY_HOPS: intFrom(2),
   RATE_LIMIT_WINDOW_MS: intFrom(60000),
-  RATE_LIMIT_MAX: intFrom(120),
+  // Per client IP, per window. Generous because a single page load legitimately
+  // fires several parallel API calls.
+  RATE_LIMIT_MAX: intFrom(300),
   OTP_RATE_LIMIT_MAX: intFrom(3),
   OTP_RATE_LIMIT_WINDOW_MS: intFrom(300000),
 
