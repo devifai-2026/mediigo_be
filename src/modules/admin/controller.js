@@ -7,7 +7,12 @@ export const listApprovals = async (req, res) => {
   res.json({ ok: true, data });
 };
 export const approve = async (req, res) => {
-  const data = await service.approveSubmission({ submissionId: req.params.id, ...meta(req) });
+  const data = await service.approveSubmission({
+    submissionId: req.params.id,
+    // An empty string means "pick one for me", not "set an empty password".
+    password: req.body?.password || undefined,
+    ...meta(req),
+  });
   res.json({ ok: true, data });
 };
 export const reject = async (req, res) => {

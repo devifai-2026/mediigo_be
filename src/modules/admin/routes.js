@@ -12,10 +12,17 @@ const ADMINS = [ROLES.EXEC_ADMIN, ROLES.SUPER_ADMIN];
 
 const reasonSchema = { body: z.object({ reason: z.string().min(10).max(500), force: z.boolean().optional() }) };
 
+// Approving may set the new doctor's or receptionist's sign-in password.
+// Optional: omit it and a random one comes back as tempPassword instead. Same
+// 8-72 bound as staff provisioning, so one rule governs every staff password.
+const approveSchema = {
+  body: z.object({ password: z.string().min(8).max(72).optional().or(z.literal('')) }).optional(),
+};
+
 adminRoutes.use(requireAuth, asyncHandler(requireActiveUser), requireRole(...ADMINS));
 
 adminRoutes.get('/approvals', asyncHandler(controller.listApprovals));
-adminRoutes.post('/submissions/:id/approve', asyncHandler(controller.approve));
+adminRoutes.post('/submissions/:id/approve', validate(approveSchema), asyncHandler(controller.approve));
 adminRoutes.post('/submissions/:id/reject', validate(reasonSchema), asyncHandler(controller.reject));
 
 adminRoutes.get('/hospitals', asyncHandler(controller.listHospitals));

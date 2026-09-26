@@ -41,8 +41,15 @@ const requireReason = (reason) => {
   return String(reason).trim();
 };
 
-/** Approve an agent submission: creates the Hospital (or Doctor) as ACTIVE. */
-export const approveSubmission = async ({ submissionId, actor, ip, userAgent }) => {
+/**
+ * Approve an agent submission: creates the Hospital (or Doctor) as ACTIVE.
+ *
+ * `password` lets the approver choose the new account's sign-in password. When
+ * omitted a random one is generated and returned as `tempPassword` — which is
+ * secure, but is shown exactly once, so an approver who does not write it down
+ * leaves an account nobody can log into. Passing a password avoids that.
+ */
+export const approveSubmission = async ({ submissionId, actor, ip, userAgent, password }) => {
   const submission = await OnboardingSubmission.findById(submissionId);
   if (!submission) throw notFound('Submission not found');
   assertSubmissionScope(actor, submission);
@@ -104,7 +111,7 @@ export const approveSubmission = async ({ submissionId, actor, ip, userAgent }) 
         if (p.primaryContact?.phone) {
           const already = await User.findOne({ phone: p.primaryContact.phone }).session(session);
           if (!already) {
-            const tempPassword = randomToken(6);
+            const tempPassword = password || randomToken(6);
             await User.create(
               [{
                 phone: p.primaryContact.phone,
@@ -130,7 +137,7 @@ export const approveSubmission = async ({ submissionId, actor, ip, userAgent }) 
         if (hospital.networkState !== NETWORK_STATE.ACTIVE) {
           throw conflict('The parent clinic must be active before adding a doctor');
         }
-        const tempPassword = randomToken(6);
+        const tempPassword = password || randomToken(6);
         const [user] = await User.create(
           [{
             phone: p.phone, name: p.name, role: ROLES.DOCTOR,
