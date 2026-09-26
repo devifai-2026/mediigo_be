@@ -27,10 +27,31 @@ export const createApp = () => {
   app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
   app.use(
     cors({
+      // Every origin is allowed while this is a development/demo deployment,
+      // reflected back so Access-Control-Allow-Credentials stays usable — the
+      // wildcard '*' is illegal on a credentialed request, so the caller's own
+      // origin has to be echoed instead.
+      //
+      // The allowlist is still honoured when CORS_ORIGINS is set, so locking
+      // this down for real users is a config change, not a code change. Until
+      // then any site can call this API with a user's cookies; that is the
+      // trade being made deliberately, not an oversight.
+      //
+      // A rejected origin is denied by withholding the header rather than
+      // throwing: throwing surfaced as a 500 INTERNAL_ERROR, which reads as
+      // "the API is broken" when the truth is "this origin is not allowed".
       origin: (origin, cb) => {
         // No origin = same-origin, curl, or a mobile webview.
-        if (!origin || env.CORS_ORIGINS.length === 0 || env.CORS_ORIGINS.includes(origin)) return cb(null, true);
-        return cb(new Error(`Origin not allowed: ${origin}`));
+        if (!origin) return cb(null, true);
+        // Empty list, or a literal '*', means allow everything. Note the
+        // response still echoes the caller's own origin rather than sending
+        // '*': a wildcard is ILLEGAL on a credentialed request, so sending it
+        // would make browsers drop the refresh cookie and sign users out on
+        // every reload. Echoing is how you get allow-all WITH cookies.
+        if (env.CORS_ORIGINS.length === 0 || env.CORS_ORIGINS.includes('*')) return cb(null, true);
+        if (env.CORS_ORIGINS.includes(origin)) return cb(null, true);
+        logger.warn({ origin }, 'CORS: origin not in CORS_ORIGINS allowlist');
+        return cb(null, false);
       },
       credentials: true,
     }),

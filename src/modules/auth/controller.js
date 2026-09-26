@@ -4,11 +4,20 @@ import { env, isProduction } from '../../config/env.js';
 const REFRESH_COOKIE = 'refreshToken';
 
 // httpOnly so XSS cannot read it; the access token is kept in memory client-side.
+//
+// SameSite=None in production because the browser now calls this API directly
+// on a different origin than the app it is served from. Under 'lax' the browser
+// simply never sends this cookie on those requests, so every refresh would 401
+// and the user would be signed out on each page reload.
+//
+// None REQUIRES Secure, which is why the two are set together — a None cookie
+// without Secure is rejected outright by every current browser. Development
+// stays on 'lax' over plain http, where None/Secure could not be set anyway.
 const setRefreshCookie = (res, token) => {
   res.cookie(REFRESH_COOKIE, token, {
     httpOnly: true,
     secure: isProduction(),
-    sameSite: 'lax',
+    sameSite: isProduction() ? 'none' : 'lax',
     maxAge: env.JWT_REFRESH_TTL_DAYS * 24 * 60 * 60 * 1000,
     path: '/',
   });
@@ -45,7 +54,16 @@ export const refresh = async (req, res) => {
 };
 
 export const logout = async (_req, res) => {
-  res.clearCookie(REFRESH_COOKIE, { path: '/' });
+  // The browser only removes a cookie when the clearing attributes MATCH the
+  // ones it was set with. Omitting sameSite/secure here would leave the refresh
+  // cookie alive, so a "logged out" user would be silently signed back in on
+  // the next page load.
+  res.clearCookie(REFRESH_COOKIE, {
+    httpOnly: true,
+    secure: isProduction(),
+    sameSite: isProduction() ? 'none' : 'lax',
+    path: '/',
+  });
   res.json({ ok: true, data: { loggedOut: true } });
 };
 
