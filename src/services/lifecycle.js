@@ -42,6 +42,19 @@ const requireReason = (reason) => {
 };
 
 /**
+ * Exactly one "Dr." on a doctor's name, however the caller spelled it.
+ *
+ * The clinic's form shows "Dr." as fixed text so nobody types it, but a name
+ * can also arrive from an import, a script, or an older client that still
+ * sends it. Normalising once at creation means every surface — cards, rosters,
+ * announcements — renders identically, and nobody ever sees "Dr. Dr. Aditi".
+ */
+const withDoctorTitle = (raw) => {
+  const bare = String(raw || '').replace(/^\s*(dr|doctor)\.?\s+/i, '').trim();
+  return bare ? `Dr. ${bare}` : bare;
+};
+
+/**
  * Approve an agent submission: creates the Hospital (or Doctor) as ACTIVE.
  *
  * `password` lets the approver choose the new account's sign-in password. When
@@ -140,7 +153,7 @@ export const approveSubmission = async ({ submissionId, actor, ip, userAgent, pa
         const tempPassword = password || randomToken(6);
         const [user] = await User.create(
           [{
-            phone: p.phone, name: p.name, role: ROLES.DOCTOR,
+            phone: p.phone, name: withDoctorTitle(p.name), role: ROLES.DOCTOR,
             passwordHash: await hashPassword(tempPassword),
             hospitalId: hospital._id, createdBy: actor.id,
           }],
@@ -148,7 +161,7 @@ export const approveSubmission = async ({ submissionId, actor, ip, userAgent, pa
         );
         const [doctor] = await Doctor.create(
           [{
-            userId: user._id, hospitalId: hospital._id, name: p.name, specialty: p.specialty,
+            userId: user._id, hospitalId: hospital._id, name: withDoctorTitle(p.name), specialty: p.specialty,
             qualifications: p.qualifications || [], councilRegNo: p.councilRegNo,
             chamberNumber: p.chamberNumber, fees: p.fees,
           }],
