@@ -17,6 +17,7 @@
     "lint": "eslint src scripts"
   },
   "dependencies": {
+    "@google-cloud/storage": "^7.22.0",
     "argon2": "^0.41.1",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
@@ -26,8 +27,10 @@
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.8.0",
     "morgan": "^1.10.0",
+    "multer": "^2.4.0",
     "pino": "^9.5.0",
     "pino-pretty": "^11.2.2",
+    "sharp": "^0.35.5",
     "socket.io": "^4.8.1",
     "zod": "^3.23.8"
   },

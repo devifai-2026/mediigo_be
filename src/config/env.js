@@ -68,6 +68,19 @@ const schema = z.object({
   // proxy in front of it.
   TRUST_PROXY_HOPS: intFrom(2),
 
+  // Object storage for uploaded images. Leave GCS_BUCKET unset to fall back to
+  // the local-disk driver, which needs no credentials and is what a developer
+  // without Google access runs against.
+  //
+  // Credentials come from Application Default Credentials. On a non-Google host
+  // such as Hostinger, ADC has nothing to discover, so point
+  // GOOGLE_APPLICATION_CREDENTIALS at a service-account key file — or, better,
+  // set GCS_CREDENTIALS_JSON to the key's CONTENTS so no secret is ever written
+  // to that host's disk.
+  GCS_BUCKET: z.string().default(''),
+  GCS_PROJECT_ID: z.string().default(''),
+  GCS_CREDENTIALS_JSON: z.string().default(''),
+
   DEFAULT_TIMEZONE: z.string().default('Asia/Kolkata'),
   RECEIPT_PREFIX: z.string().default('MG'),
   POLICY_BENCHMARK_VERSION: z.string().default('2025-26'),

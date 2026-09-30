@@ -1,3 +1,9 @@
 node_modules/
 .env
 *.log
+
+# GCP service-account keys. NEVER commit one: it is a long-lived credential to
+# the whole bucket. Prefer Workload Identity or ADC over a key file at all.
+gcs-key.json
+*-key.json
+*.serviceaccount.json

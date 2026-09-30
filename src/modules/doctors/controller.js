@@ -6,6 +6,16 @@ import { assertDoctorScope } from '../../middleware/rbac.js';
 import { doctorAvailability } from '../../services/availability.js';
 import { markDoctorOff, clearDoctorOff } from '../../services/absence.js';
 
+export const setPhoto = async (req, res) => {
+  const data = await service.setPhoto({ doctorId: req.params.id, file: req.file, actor: req.user });
+  res.json({ ok: true, data });
+};
+
+export const removePhoto = async (req, res) => {
+  const data = await service.removePhoto({ doctorId: req.params.id, actor: req.user });
+  res.json({ ok: true, data });
+};
+
 export const specialties = async (_req, res) => {
   res.json({ ok: true, data: await service.specialties() });
 };

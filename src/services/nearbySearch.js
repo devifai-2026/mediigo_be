@@ -84,7 +84,7 @@ export const findNearbyDoctors = async ({ lng, lat, radiusKm, specialty, search,
           {
             $project: {
               name: 1, specialty: 1, qualifications: 1, fees: 1, chamberNumber: 1,
-              session: 1, experienceYears: 1, avgConsultMinutes: 1, languages: 1,
+              session: 1, experienceYears: 1, avgConsultMinutes: 1, languages: 1, photo: 1,
             },
           },
         ],
@@ -154,6 +154,9 @@ export const findNearbyDoctors = async ({ lng, lat, radiusKm, specialty, search,
       rows.push({
         doctorId: String(d._id),
         name: d.name,
+        // Null when none was uploaded; the card falls back to initials rather
+        // than rendering a broken image.
+        photoUrl: d.photo?.url ?? null,
         specialty: d.specialty,
         qualifications: d.qualifications,
         experienceYears: d.experienceYears,

@@ -1,5 +1,6 @@
 import { Doctor, Hospital } from '../../models/index.js';
 import { findNearbyDoctors } from '../../services/nearbySearch.js';
+import { assertUploadable, processAvatar, putObject, deleteObject } from '../../services/storage.js';
 import { notFound } from '../../lib/errors.js';
 import { assertDoctorScope } from '../../middleware/rbac.js';
 import { scopeFilter } from '../../middleware/rbac.js';
@@ -47,6 +48,47 @@ export const updateFees = async ({ doctorId, fees, actor }) => {
   if (!doctor) throw notFound('Doctor not found');
   assertDoctorScope(actor, doctor, { selfOnly: false });
   await Doctor.updateOne({ _id: doctor._id }, { $set: { fees } });
+  return Doctor.findById(doctor._id).lean();
+};
+
+/**
+ * Replace a doctor's profile photo.
+ *
+ * The old object is deleted only AFTER the new one is safely stored, so a
+ * failed upload never leaves a doctor with no photo at all. Cleanup failures
+ * are swallowed by deleteObject: an orphaned object costs almost nothing, while
+ * failing the request would lose an upload that already succeeded.
+ */
+export const setPhoto = async ({ doctorId, file, actor }) => {
+  const doctor = await Doctor.findById(doctorId);
+  if (!doctor) throw notFound('Doctor not found');
+  assertDoctorScope(actor, doctor, { selfOnly: false });
+
+  assertUploadable(file);
+  const processed = await processAvatar(file.buffer);
+  const stored = await putObject({ ...processed, prefix: `doctors/${doctor._id}` });
+
+  const previous = doctor.photo?.objectPath ?? null;
+  await Doctor.updateOne(
+    { _id: doctor._id },
+    { $set: { photo: { url: stored.url, objectPath: stored.objectPath, updatedAt: new Date() } } },
+  );
+  if (previous && previous !== stored.objectPath) await deleteObject(previous);
+
+  return Doctor.findById(doctor._id).lean();
+};
+
+export const removePhoto = async ({ doctorId, actor }) => {
+  const doctor = await Doctor.findById(doctorId);
+  if (!doctor) throw notFound('Doctor not found');
+  assertDoctorScope(actor, doctor, { selfOnly: false });
+
+  const previous = doctor.photo?.objectPath ?? null;
+  await Doctor.updateOne(
+    { _id: doctor._id },
+    { $set: { photo: { url: null, objectPath: null, updatedAt: new Date() } } },
+  );
+  if (previous) await deleteObject(previous);
   return Doctor.findById(doctor._id).lean();
 };
 

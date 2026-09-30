@@ -15,6 +15,20 @@ const doctorSchema = new mongoose.Schema(
     experienceYears: Number,
     languages: { type: [String], default: ['English'] },
 
+    /**
+     * Profile photo, shown on the patient-facing doctor card.
+     *
+     * `url` is what the browser loads; `objectPath` is the storage key behind
+     * it, kept so a replacement can delete the old object instead of orphaning
+     * it in the bucket. Null until someone uploads one — the card falls back to
+     * initials, so a doctor without a photo is never a broken image.
+     */
+    photo: {
+      url: { type: String, default: null },
+      objectPath: { type: String, default: null },
+      updatedAt: { type: Date, default: null },
+    },
+
     fees: {
       fresh: { type: Number, required: true, min: 0 },
       followup: { type: Number, required: true, min: 0 },
