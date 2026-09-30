@@ -29,6 +29,9 @@ doctorRoutes.get('/specialties', asyncHandler(controller.specialties));
 // Type-ahead for the search box. Public for the same reason as /nearby.
 doctorRoutes.get('/suggest', validate(suggestSchema), asyncHandler(controller.suggest));
 
+// Cities with clinics, so a patient can browse a city instead of sharing GPS.
+doctorRoutes.get('/cities', asyncHandler(controller.cities));
+
 doctorRoutes.get(
   '/',
   requireAuth, asyncHandler(requireActiveUser),

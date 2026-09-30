@@ -314,3 +314,43 @@ export const suggestSearch = async ({ q, limit = 8 }) => {
   rows.sort((a, b) => rank(a) - rank(b) || a.label.localeCompare(b.label));
   return rows.slice(0, limit);
 };
+
+/**
+ * Cities a patient can search in, with a centre to measure from.
+ *
+ * Addresses are stored as "Area, City" ("Kothrud, Pune"), so the city is the
+ * LAST comma-separated part — grouping on the raw string would offer twelve
+ * Pune neighbourhoods as if they were separate cities.
+ *
+ * The centre is the mean of the clinics in that city. Good enough to rank by
+ * distance, and it needs no geocoding call or hardcoded city table that would
+ * drift the moment a clinic opens somewhere new.
+ */
+export const listCities = async () => {
+  const hospitals = await Hospital.find({ networkState: NETWORK_STATE.ACTIVE })
+    .select('address.city location')
+    .lean();
+
+  const byCity = new Map();
+  for (const h of hospitals) {
+    const raw = h.address?.city;
+    const coords = h.location?.coordinates;
+    if (!raw || !coords) continue;
+    const city = raw.split(',').pop().trim();
+    if (!city) continue;
+    const row = byCity.get(city) ?? { city, clinics: 0, lng: 0, lat: 0 };
+    row.clinics += 1;
+    row.lng += coords[0];
+    row.lat += coords[1];
+    byCity.set(city, row);
+  }
+
+  return [...byCity.values()]
+    .map((r) => ({
+      city: r.city,
+      clinics: r.clinics,
+      lng: Number((r.lng / r.clinics).toFixed(6)),
+      lat: Number((r.lat / r.clinics).toFixed(6)),
+    }))
+    .sort((a, b) => b.clinics - a.clinics || a.city.localeCompare(b.city));
+};

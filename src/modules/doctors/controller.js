@@ -20,6 +20,10 @@ export const suggest = async (req, res) => {
   res.json({ ok: true, data: await service.suggest({ q: req.query.q, limit: req.query.limit }) });
 };
 
+export const cities = async (_req, res) => {
+  res.json({ ok: true, data: await service.cities() });
+};
+
 export const specialties = async (_req, res) => {
   res.json({ ok: true, data: await service.specialties() });
 };
