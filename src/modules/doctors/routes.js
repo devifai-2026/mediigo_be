@@ -6,7 +6,7 @@ import { validate } from '../../middleware/validate.js';
 import { requireAuth, optionalAuth, requireActiveUser } from '../../middleware/auth.js';
 import { requireRole } from '../../middleware/rbac.js';
 import { ROLES } from '../../config/constants.js';
-import { nearbySchema, feesSchema, profileSchema, scheduleSchema, markOffSchema } from './schema.js';
+import { nearbySchema, suggestSchema, feesSchema, profileSchema, scheduleSchema, markOffSchema } from './schema.js';
 
 export const doctorRoutes = Router();
 
@@ -25,6 +25,9 @@ doctorRoutes.get('/nearby', optionalAuth, validate(nearbySchema), asyncHandler(c
 
 // Public too: the Explore filter needs this before anyone signs in.
 doctorRoutes.get('/specialties', asyncHandler(controller.specialties));
+
+// Type-ahead for the search box. Public for the same reason as /nearby.
+doctorRoutes.get('/suggest', validate(suggestSchema), asyncHandler(controller.suggest));
 
 doctorRoutes.get(
   '/',

@@ -12,6 +12,13 @@ export const nearbySchema = {
   }),
 };
 
+export const suggestSchema = {
+  query: z.object({
+    q: z.string().max(80).optional(),
+    limit: z.coerce.number().int().min(1).max(20).optional(),
+  }),
+};
+
 export const feesSchema = {
   body: z.object({
     fresh: z.coerce.number().min(0),

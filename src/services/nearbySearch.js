@@ -7,6 +7,10 @@ import { NETWORK_STATE, TOKEN_STATUS } from '../config/constants.js';
 
 const escapeRegex = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+// Every doctor's name begins "Dr.", so ranking a search term against it would
+// treat that prefix as if it were part of the name.
+const stripTitle = (s) => String(s || '').replace(/^\s*(dr|doctor)\.?\s+/i, '');
+
 /**
  * Nearby doctor discovery.
  *
@@ -98,7 +102,31 @@ export const findNearbyDoctors = async ({ lng, lat, radiusKm, specialty, search,
   ]);
 
   if (!hospitals.length) {
-    return { meta: { distanceSource: 'NONE', radiusKm: radius, count: 0 }, data: [] };
+    // Nothing in range. If the term matches a doctor who simply practises
+    // somewhere else, say WHERE — "no results, widen your radius" is useless
+    // advice when the doctor is 1500km away and no radius would ever reach
+    // them. Only runs on the empty path, so it costs nothing in the normal case.
+    let elsewhere = null;
+    if (searchRe) {
+      const hit = await Doctor.findOne({
+        isActive: true,
+        $or: [{ name: searchRe }, { specialty: searchRe }],
+      }).select('name specialty hospitalId').lean();
+      if (hit) {
+        const h = await Hospital.findById(hit.hospitalId)
+          .select('name address networkState')
+          .lean();
+        if (h?.networkState === NETWORK_STATE.ACTIVE) {
+          elsewhere = {
+            name: hit.name,
+            specialty: hit.specialty,
+            clinicName: h.name,
+            city: h.address?.city ?? null,
+          };
+        }
+      }
+    }
+    return { meta: { distanceSource: 'NONE', radiusKm: radius, count: 0, elsewhere }, data: [] };
   }
 
   // One batched query for live queue depth — never one per doctor.
@@ -200,4 +228,89 @@ export const findNearbyDoctors = async ({ lng, lat, radiusKm, specialty, search,
     },
     data: rows.slice(0, limit),
   };
+};
+
+/**
+ * Type-ahead for the Explore search box.
+ *
+ * Returns doctors AND clinics in one list so a patient who half-remembers
+ * either can find it, and every row carries enough context — specialty, clinic,
+ * city — to tell two similar names apart before committing to a search.
+ *
+ * Deliberately NOT distance-filtered. Someone typing a doctor's name wants to
+ * know that doctor exists and where they practise; hiding them because they are
+ * outside today's radius is how a search ends up looking broken when the data
+ * is fine.
+ */
+export const suggestSearch = async ({ q, limit = 8 }) => {
+  const term = String(q || '').trim();
+  // Two characters is where a prefix stops matching half the network.
+  if (term.length < 2) return [];
+  const re = new RegExp(escapeRegex(term), 'i');
+
+  const [doctors, hospitals] = await Promise.all([
+    Doctor.find({ isActive: true, $or: [{ name: re }, { specialty: re }] })
+      .select('name specialty hospitalId photo')
+      .limit(limit)
+      .lean(),
+    Hospital.find({
+      networkState: NETWORK_STATE.ACTIVE,
+      $or: [{ name: re }, { 'address.city': re }],
+    })
+      .select('name address')
+      .limit(limit)
+      .lean(),
+  ]);
+
+  const hospitalIds = [...new Set(doctors.map((d) => String(d.hospitalId)))];
+  const parents = await Hospital.find({ _id: { $in: hospitalIds } })
+    .select('name address networkState')
+    .lean();
+  const byId = new Map(parents.map((h) => [String(h._id), h]));
+
+  const rows = [];
+  for (const d of doctors) {
+    const h = byId.get(String(d.hospitalId));
+    // A doctor whose clinic has left the network is not bookable, so offering
+    // them would lead straight to an empty result.
+    if (h?.networkState !== NETWORK_STATE.ACTIVE) continue;
+    rows.push({
+      kind: 'doctor',
+      // The value that goes into the search box when this row is picked.
+      value: d.name,
+      label: d.name,
+      sublabel: [d.specialty, h?.name].filter(Boolean).join(' · '),
+      city: h?.address?.city ?? null,
+      photoUrl: d.photo?.url ?? null,
+      doctorId: String(d._id),
+    });
+  }
+  for (const h of hospitals) {
+    rows.push({
+      kind: 'clinic',
+      value: h.name,
+      label: h.name,
+      sublabel: [h.address?.line1, h.address?.city].filter(Boolean).join(', '),
+      city: h.address?.city ?? null,
+      hospitalId: String(h._id),
+    });
+  }
+
+  /**
+   * Rank by how the match sits in the text, not just whether it matched.
+   *
+   * "adi" hits both "Dr. Aditi" and "Bibwewadi", but a typist means the former:
+   * a match at the start of a WORD is intentional, one buried mid-word is
+   * incidental. The title is skipped so "adi" still ranks "Dr. Aditi" first
+   * rather than penalising it for starting with "Dr.".
+   */
+  const lower = term.toLowerCase();
+  const rank = (r) => {
+    const label = stripTitle(r.label).toLowerCase();
+    if (label.startsWith(lower)) return 0;
+    if (label.split(/\s+/).some((w) => w.startsWith(lower))) return 1;
+    return 2;
+  };
+  rows.sort((a, b) => rank(a) - rank(b) || a.label.localeCompare(b.label));
+  return rows.slice(0, limit);
 };

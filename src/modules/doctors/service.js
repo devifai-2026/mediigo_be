@@ -1,5 +1,5 @@
 import { Doctor, Hospital } from '../../models/index.js';
-import { findNearbyDoctors } from '../../services/nearbySearch.js';
+import { findNearbyDoctors, suggestSearch } from '../../services/nearbySearch.js';
 import { assertUploadable, processAvatar, putObject, deleteObject } from '../../services/storage.js';
 import { notFound } from '../../lib/errors.js';
 import { assertDoctorScope } from '../../middleware/rbac.js';
@@ -7,6 +7,8 @@ import { scopeFilter } from '../../middleware/rbac.js';
 import { NETWORK_STATE } from '../../config/constants.js';
 
 export const nearby = (params) => findNearbyDoctors(params);
+
+export const suggest = (params) => suggestSearch(params);
 
 /**
  * Specialties a patient can actually filter by.
