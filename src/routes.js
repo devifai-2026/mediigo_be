@@ -3,6 +3,7 @@ import { authRoutes } from './modules/auth/routes.js';
 import { posRoutes } from './modules/pos/routes.js';
 import { queueRoutes } from './modules/queue/routes.js';
 import { doctorRoutes } from './modules/doctors/routes.js';
+import { specialtyRoutes } from './modules/specialties/routes.js';
 import { policyRoutes } from './modules/policy/routes.js';
 import { adminRoutes } from './modules/admin/routes.js';
 import { onboardingRoutes } from './modules/onboarding/routes.js';
@@ -17,6 +18,7 @@ export const mountRoutes = (app) => {
   app.use('/api/auth', authRoutes);
   app.use('/api/patients', patientRoutes);
   app.use('/api/doctors', doctorRoutes);
+  app.use('/api/specialties', specialtyRoutes);
   app.use('/api/queue', queueRoutes);
   app.use('/api/pos', posRoutes);
   app.use('/api/policy', policyRoutes);

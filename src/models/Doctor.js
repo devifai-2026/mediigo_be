@@ -8,7 +8,20 @@ const doctorSchema = new mongoose.Schema(
     hospitalId: { type: mongoose.Schema.Types.ObjectId, ref: 'Hospital', required: true },
     // Denormalized so doctor lists and announcements don't need a populate.
     name: { type: String, required: true, trim: true },
+    /**
+     * The primary specialty, kept as a string. Search, seeds, the patient cards
+     * and the superadmin rollups all read this, so it stays the denormalised
+     * display value rather than becoming a populate on every query.
+     */
     specialty: { type: String, required: true, trim: true },
+
+    /**
+     * Every specialty this doctor practises, as references to the managed list.
+     * A doctor is frequently more than one thing — a physician who also does
+     * paediatrics — and a single string could only ever express one of them.
+     * The primary above remains whatever the card should lead with.
+     */
+    specialtyIds: { type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Specialty' }], default: [] },
     qualifications: { type: [String], default: [] },
     councilRegNo: { type: String, required: true, trim: true },
     chamberNumber: { type: String, default: '' },

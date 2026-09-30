@@ -4,6 +4,7 @@ export { User } from './User.js';
 export { District } from './District.js';
 export { Hospital } from './Hospital.js';
 export { Doctor } from './Doctor.js';
+export { Specialty, toSlug } from './Specialty.js';
 export { QRStandee } from './QRStandee.js';
 export { OPDToken } from './OPDToken.js';
 export { Transaction } from './Transaction.js';
@@ -20,6 +21,7 @@ import { User } from './User.js';
 import { District } from './District.js';
 import { Hospital } from './Hospital.js';
 import { Doctor } from './Doctor.js';
+import { Specialty } from './Specialty.js';
 import { QRStandee } from './QRStandee.js';
 import { OPDToken } from './OPDToken.js';
 import { Transaction } from './Transaction.js';
@@ -33,7 +35,7 @@ import { DistanceCache } from './DistanceCache.js';
 import { Ticket } from './Ticket.js';
 
 export const allModels = [
-  User, District, Hospital, Doctor, QRStandee, OPDToken, Transaction,
+  User, District, Hospital, Doctor, Specialty, QRStandee, OPDToken, Transaction,
   PatientPolicy, OnboardingSubmission, AuditLog, OtpVerification,
   WaSettings, Counter, DistanceCache, Ticket,
 ];
