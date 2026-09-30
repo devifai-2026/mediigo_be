@@ -31,6 +31,9 @@ export const profileSchema = {
   body: z.object({
     name: z.string().trim().min(2).max(80).optional(),
     specialty: z.string().trim().min(2).max(60).optional(),
+    // References into the specialty master. The string above stays the primary
+    // display value; this is every specialty the doctor practises.
+    specialtyIds: z.array(z.string()).max(6).optional(),
     chamberNumber: z.string().max(20).optional(),
     qualifications: z.array(z.string().max(40)).max(10).optional(),
     languages: z.array(z.string().max(30)).max(10).optional(),

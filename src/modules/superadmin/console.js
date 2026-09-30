@@ -105,6 +105,8 @@ export const getConsole = async () => {
       id: String(d._id),
       hospitalId: String(d.hospitalId),
       doctorName: d.name,
+      // So the admin drawer can show the current photo without another fetch.
+      photoUrl: d.photo?.url ?? null,
       clinicName: h?.name ?? 'Unassigned',
       specialty: d.specialty,
       education: (d.qualifications || []).join(', '),

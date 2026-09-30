@@ -1,4 +1,4 @@
-import { Doctor, Hospital } from '../../models/index.js';
+import { Doctor, Hospital, Specialty } from '../../models/index.js';
 import { findNearbyDoctors, suggestSearch, listCities } from '../../services/nearbySearch.js';
 import { assertUploadable, processAvatar, putObject, deleteObject } from '../../services/storage.js';
 import { notFound } from '../../lib/errors.js';
@@ -100,6 +100,22 @@ export const updateProfile = async ({ doctorId, patch, actor }) => {
   const doctor = await Doctor.findById(doctorId);
   if (!doctor) throw notFound('Doctor not found');
   assertDoctorScope(actor, doctor, { selfOnly: false });
-  await Doctor.updateOne({ _id: doctor._id }, { $set: patch });
+
+  const next = { ...patch };
+
+  /**
+   * Keep the denormalised `specialty` string in step with the references.
+   *
+   * The string is what search, the patient cards and the superadmin rollups
+   * read. Letting the two drift means a doctor's card says "Pediatrics" while
+   * the browse tiles file them under Dermatology — so the FIRST id wins and the
+   * string follows it, unless the caller set both explicitly.
+   */
+  if (next.specialtyIds?.length && !next.specialty) {
+    const primary = await Specialty.findById(next.specialtyIds[0]).select('name').lean();
+    if (primary) next.specialty = primary.name;
+  }
+
+  await Doctor.updateOne({ _id: doctor._id }, { $set: next });
   return Doctor.findById(doctor._id).lean();
 };
