@@ -6,6 +6,10 @@ import { assertDoctorScope } from '../../middleware/rbac.js';
 import { doctorAvailability } from '../../services/availability.js';
 import { markDoctorOff, clearDoctorOff } from '../../services/absence.js';
 
+export const specialties = async (_req, res) => {
+  res.json({ ok: true, data: await service.specialties() });
+};
+
 export const nearby = async (req, res) => {
   const data = await service.nearby(req.query);
   res.json({ ok: true, ...data });

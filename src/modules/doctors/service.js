@@ -7,6 +7,18 @@ import { NETWORK_STATE } from '../../config/constants.js';
 
 export const nearby = (params) => findNearbyDoctors(params);
 
+/**
+ * Specialties a patient can actually filter by.
+ *
+ * Read from the doctors who are live on the network rather than a hardcoded
+ * list: the client's constant listed eight while only four existed, so half the
+ * dropdown silently returned nothing and read as a broken filter.
+ */
+export const specialties = async () => {
+  const names = await Doctor.distinct('specialty', { isActive: true });
+  return names.filter(Boolean).sort((a, b) => a.localeCompare(b));
+};
+
 export const getById = async (doctorId) => {
   const doctor = await Doctor.findById(doctorId).lean();
   if (!doctor || !doctor.isActive) throw notFound('Doctor not found');

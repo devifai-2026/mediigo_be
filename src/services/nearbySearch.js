@@ -16,6 +16,9 @@ const escapeRegex = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
  */
 export const findNearbyDoctors = async ({ lng, lat, radiusKm, specialty, search, limit = 30 }) => {
   const radius = Math.min(radiusKm || env.NEARBY_DEFAULT_RADIUS_KM, env.NEARBY_MAX_RADIUS_KM);
+  // One compiled pattern reused by every $regexMatch below. Built once so the
+  // term is escaped in exactly one place.
+  const searchRe = search ? new RegExp(escapeRegex(String(search).trim()), 'i') : null;
 
   const hospitals = await Hospital.aggregate([
     {
@@ -32,17 +35,50 @@ export const findNearbyDoctors = async ({ lng, lat, radiusKm, specialty, search,
     // distance, so a $limit immediately after is equivalent and supported.
     { $limit: env.NEARBY_MAX_HOSPITALS },
     { $addFields: { crowKm: { $divide: ['$crowMeters', 1000] } } },
+    // Does the SEARCH TERM match this clinic itself — its name, city or area?
+    // Computed before the doctor lookup so the lookup can use it: a search for
+    // "Erandwane" should return everyone practising there, not nobody, and a
+    // clinic's own name is what a patient is most likely to type after a
+    // doctor's. Without this the term was only ever matched against doctors.
+    {
+      $addFields: {
+        clinicMatches: search
+          ? {
+            $or: [
+              { $regexMatch: { input: { $ifNull: ['$name', ''] }, regex: searchRe } },
+              { $regexMatch: { input: { $ifNull: ['$address.city', ''] }, regex: searchRe } },
+              { $regexMatch: { input: { $ifNull: ['$address.line1', ''] }, regex: searchRe } },
+            ],
+          }
+          : false,
+      },
+    },
     {
       $lookup: {
         from: 'doctors',
-        let: { hid: '$_id' },
+        let: { hid: '$_id', clinicHit: '$clinicMatches' },
         pipeline: [
           {
             $match: {
-              $expr: { $eq: ['$hospitalId', '$$hid'] },
+              $expr: {
+                $and: [
+                  { $eq: ['$hospitalId', '$$hid'] },
+                  // When the clinic itself matched, keep every doctor there.
+                  // Otherwise fall back to matching the doctor's own name or
+                  // specialty, which is the pre-existing behaviour.
+                  search
+                    ? {
+                      $or: [
+                        '$$clinicHit',
+                        { $regexMatch: { input: { $ifNull: ['$name', ''] }, regex: searchRe } },
+                        { $regexMatch: { input: { $ifNull: ['$specialty', ''] }, regex: searchRe } },
+                      ],
+                    }
+                    : true,
+                ],
+              },
               isActive: true,
               ...(specialty ? { specialty: new RegExp(`^${escapeRegex(specialty)}$`, 'i') } : {}),
-              ...(search ? { $or: [{ name: new RegExp(escapeRegex(search), 'i') }, { specialty: new RegExp(escapeRegex(search), 'i') }] } : {}),
             },
           },
           {
@@ -56,6 +92,8 @@ export const findNearbyDoctors = async ({ lng, lat, radiusKm, specialty, search,
       },
     },
     { $match: { 'doctors.0': { $exists: true } } },
+    // clinicMatches is deliberately absent: it is a pipeline helper, not part
+    // of the response contract.
     { $project: { name: 1, code: 1, type: 1, address: 1, location: 1, crowKm: 1, doctors: 1, subscriptionPlan: 1, contactPhone: 1 } },
   ]);
 

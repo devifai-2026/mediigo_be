@@ -12,6 +12,9 @@ export const doctorRoutes = Router();
 // Public — patients browse clinics before signing in.
 doctorRoutes.get('/nearby', optionalAuth, validate(nearbySchema), asyncHandler(controller.nearby));
 
+// Public too: the Explore filter needs this before anyone signs in.
+doctorRoutes.get('/specialties', asyncHandler(controller.specialties));
+
 doctorRoutes.get(
   '/',
   requireAuth, asyncHandler(requireActiveUser),
