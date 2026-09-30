@@ -27,7 +27,13 @@ import { validationError } from '../lib/errors.js';
 // retina @2x render of a 256px avatar and keeps objects well under 100kB.
 const AVATAR_SIZE = 512;
 const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
-const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif']);
+// JPEG and PNG only. Both are universally produced by phone cameras and photo
+// tools, and both are what the UI promises — an accept list wider than the
+// promise means a file the picker happily offers is rejected after upload.
+// HEIC is deliberately excluded: sharp cannot decode it without libheif, so
+// accepting it here would fail later with a far less clear error.
+const ALLOWED_MIME = new Set(['image/jpeg', 'image/png']);
+export const ALLOWED_EXTENSIONS = '.jpg, .jpeg, .png';
 
 const LOCAL_ROOT = path.resolve('uploads');
 const localPublicBase = () => `${env.BASE_URL.replace(/\/$/, '')}/uploads`;
@@ -96,12 +102,29 @@ export const processAvatar = async (buffer, { size = AVATAR_SIZE } = {}) => {
 export const assertUploadable = (file) => {
   if (!file) throw validationError([{ path: 'photo', message: 'No file was uploaded' }]);
   if (file.size > MAX_UPLOAD_BYTES) {
-    throw validationError([{ path: 'photo', message: 'Image must be 8MB or smaller' }]);
+    const mb = (file.size / (1024 * 1024)).toFixed(1);
+    // Name the actual size: "too large" leaves the uploader guessing whether
+    // they need to crop, compress, or pick a different photo entirely.
+    throw validationError([{
+      path: 'photo',
+      message: `That image is ${mb}MB. Please upload a JPEG or PNG under ${MAX_UPLOAD_MB}MB.`,
+    }]);
   }
   // The mimetype is the browser's claim, not proof — processAvatar is what
   // actually verifies the bytes. This just rejects the obvious cases early.
   if (file.mimetype && !ALLOWED_MIME.has(file.mimetype)) {
-    throw validationError([{ path: 'photo', message: 'Upload a JPEG, PNG or WebP image' }]);
+    // Name the format only when it is a recognisable image type — telling
+    // someone "APPLICATION/OCTET-STREAM is not supported" explains nothing.
+    // Generic types arrive whenever a client cannot identify the file, so fall
+    // back to plain language rather than echoing the header at the user.
+    const raw = String(file.mimetype);
+    const named = raw.startsWith('image/') ? raw.slice('image/'.length).toUpperCase() : null;
+    throw validationError([{
+      path: 'photo',
+      message: named
+        ? `${named} images are not supported. Please upload a JPEG or PNG.`
+        : 'That file is not a supported image. Please upload a JPEG or PNG.',
+    }]);
   }
   return file;
 };
