@@ -6,6 +6,8 @@ import { requireAuth, requireActiveUser } from '../../middleware/auth.js';
 import { requireRole } from '../../middleware/rbac.js';
 import { ROLES } from '../../config/constants.js';
 import { walkinSchema, paySchema, dayCloseSchema } from './schema.js';
+import { revenueAnalytics } from './analytics.js';
+import { validationError } from '../../lib/errors.js';
 
 export const posRoutes = Router();
 
@@ -26,6 +28,21 @@ posRoutes.post(
   validate(paySchema),
   asyncHandler(controller.pay),
 );
+// Revenue and patient analytics over a window. Scoped to the caller's own
+// clinic for desk staff; an admin may name one.
+posRoutes.get(
+  '/analytics',
+  requireRole(ROLES.RECEPTIONIST, ROLES.EXEC_ADMIN, ROLES.SUPER_ADMIN),
+  asyncHandler(async (req, res) => {
+    const hospitalId = req.user.hospitalId || req.query.hospitalId;
+    if (!hospitalId) throw validationError('No clinic in scope — pass hospitalId');
+    res.json({
+      ok: true,
+      data: await revenueAnalytics({ hospitalId, period: req.query.period }),
+    });
+  }),
+);
+
 posRoutes.get(
   '/day-close',
   requireRole(ROLES.RECEPTIONIST, ROLES.EXEC_ADMIN, ROLES.SUPER_ADMIN),

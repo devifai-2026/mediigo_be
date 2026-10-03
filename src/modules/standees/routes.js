@@ -5,7 +5,7 @@ import { asyncHandler } from '../../lib/asyncHandler.js';
 import { validate } from '../../middleware/validate.js';
 import { requireAuth, requireActiveUser } from '../../middleware/auth.js';
 import { requireRole, scopeFilter } from '../../middleware/rbac.js';
-import { notFound, conflict, gone } from '../../lib/errors.js';
+import { notFound, conflict, gone, validationError } from '../../lib/errors.js';
 import { signStandeeToken, randomToken } from '../../lib/crypto.js';
 import { writeAuditLog } from '../../lib/auditLog.js';
 import { ROLES, STANDEE_STATUS, NETWORK_STATE, AUDIT_ACTIONS } from '../../config/constants.js';
@@ -101,6 +101,73 @@ standeeRoutes.post(
     writeAuditLog({
       actorId: req.user.id, actorRole: req.user.role, action: AUDIT_ACTIONS.STANDEE_DEPLOYED,
       entityType: 'QRStandee', entityId: standee._id, hospitalId: req.body.hospitalId,
+    });
+    res.json({ ok: true, data: await QRStandee.findById(standee._id).lean() });
+  }),
+);
+
+/**
+ * The standees pointing at this doctor's chamber.
+ *
+ * A doctor needs to see and re-point their own QR without waiting on a field
+ * agent: they are the one who notices it is on the wrong door.
+ */
+standeeRoutes.get(
+  '/mine',
+  requireRole(ROLES.DOCTOR, ROLES.RECEPTIONIST),
+  asyncHandler(async (req, res) => {
+    const q = req.user.role === ROLES.DOCTOR
+      ? { doctorId: req.user.doctorId }
+      : { hospitalId: req.user.hospitalId };
+    const rows = await QRStandee.find({ ...q, status: STANDEE_STATUS.DEPLOYED }).lean();
+    res.json({
+      ok: true,
+      data: rows.map((r) => ({
+        serialId: r.serialId,
+        doctorId: r.doctorId ? String(r.doctorId) : null,
+        hospitalId: String(r.hospitalId),
+        deployedAt: r.deployedAt,
+      })),
+    });
+  }),
+);
+
+/**
+ * Re-point an already-deployed standee at a different doctor in the same
+ * clinic. Deliberately not /deploy: that one claims an unassigned standee and
+ * is an agent's job. This only moves one that is already on the wall, which
+ * is a thing the clinic does to itself and should not need a field visit.
+ */
+standeeRoutes.post(
+  '/:serialId/reassign',
+  requireRole(ROLES.DOCTOR, ROLES.RECEPTIONIST, ROLES.EXEC_ADMIN, ROLES.SUPER_ADMIN),
+  validate({ body: z.object({ doctorId: z.string().nullable().optional() }) }),
+  asyncHandler(async (req, res) => {
+    const standee = await QRStandee.findOne({ serialId: req.params.serialId.toUpperCase() });
+    if (!standee) throw notFound('Standee not found');
+    if (standee.status !== STANDEE_STATUS.DEPLOYED) {
+      throw conflict('Only a deployed standee can be re-pointed');
+    }
+    // Clinic staff may only move a standee that is already in their clinic,
+    // and only onto a doctor who works there.
+    const scoped = [ROLES.DOCTOR, ROLES.RECEPTIONIST].includes(req.user.role);
+    if (scoped && String(standee.hospitalId) !== String(req.user.hospitalId)) {
+      throw notFound('Standee not found');
+    }
+    if (req.body.doctorId) {
+      const doctor = await Doctor.findById(req.body.doctorId).lean();
+      if (!doctor || String(doctor.hospitalId) !== String(standee.hospitalId)) {
+        throw validationError('That doctor does not practise at this clinic');
+      }
+    }
+    await QRStandee.updateOne(
+      { _id: standee._id },
+      { $set: { doctorId: req.body.doctorId || null, updatedAt: new Date() } },
+    );
+    writeAuditLog({
+      actorId: req.user.id, actorRole: req.user.role, action: AUDIT_ACTIONS.STANDEE_DEPLOYED,
+      entityType: 'QRStandee', entityId: standee._id, hospitalId: standee.hospitalId,
+      reason: 'Standee re-pointed',
     });
     res.json({ ok: true, data: await QRStandee.findById(standee._id).lean() });
   }),

@@ -45,6 +45,8 @@ export const bookSchema = {
     // Why they are coming in. Optional — a patient who does not want to say
     // must still be able to book — but it is what the doctor reads first.
     complaint: z.string().trim().max(300).optional(),
+    // Long-standing conditions the doctor should know before the consultation.
+    conditions: z.array(z.string().trim().max(60)).max(20).optional(),
   }),
 };
 

@@ -17,7 +17,7 @@ export const buildQueueSnapshot = async (doctorId, date, { includePii = false } 
   const [doctor, tokens] = await Promise.all([
     Doctor.findById(doctorId).select('name chamberNumber avgConsultMinutes session hospitalId').lean(),
     OPDToken.find({ doctorId, date })
-      .select('tokenNumber status patientSnapshot patientId calledAt completedAt skipReason visitType shift startTime endTime')
+      .select('tokenNumber status patientSnapshot patientId calledAt completedAt skipReason visitType shift startTime endTime outcome')
       .sort({ tokenNumber: 1 })
       .lean(),
   ]);
@@ -85,6 +85,9 @@ export const buildQueueSnapshot = async (doctorId, date, { includePii = false } 
       // board showing "34 F" next to a masked name is still anonymous.
       age: t.patientSnapshot?.age ?? null,
       gender: t.patientSnapshot?.gender ?? null,
+      // Clinical context the doctor needs before calling someone in. Staff
+      // only: a waiting-room board must never publish a patient's history.
+      conditions: includePii ? (t.patientSnapshot?.conditions ?? []) : [],
       // Staff only: the reason for the visit is clinical detail and has no
       // business on a public waiting-room display.
       ...(includePii

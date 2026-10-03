@@ -205,7 +205,7 @@ export const setBookingOpen = async ({ doctorId, isOpen, actor }) => {
  * Patient app booking — unpaid, so no Transaction. Uses the same counter
  * allocation and retry loop as the POS.
  */
-export const bookToken = async ({ doctorId, patientId, familyMemberId, visitType = 'fresh', date: wantedDate, shift: wantedShift, complaint, actor }) => {
+export const bookToken = async ({ doctorId, patientId, familyMemberId, visitType = 'fresh', date: wantedDate, shift: wantedShift, complaint, conditions, actor }) => {
   const { doctor, hospital } = await loadDoctorAndHospital(doctorId);
   if (hospital.networkState !== NETWORK_STATE.ACTIVE) {
     throw conflict('This clinic is not accepting bookings', RESPONSE_CODES.HOSPITAL_NOT_ACTIVE);
@@ -266,6 +266,11 @@ export const bookToken = async ({ doctorId, patientId, familyMemberId, visitType
               // and a dob edited later must not rewrite an old consultation.
               age: ageFrom(member?.dob || patient.dob),
               complaint: complaint?.trim() || '',
+              // Frozen with the rest of the snapshot: what was declared for
+              // THIS visit, not whatever the profile says years later.
+              conditions: Array.isArray(conditions)
+                ? conditions.map((c) => String(c).trim()).filter(Boolean).slice(0, 20)
+                : (member?.conditions ?? []),
             },
             visitType, source: TOKEN_SOURCE.APP, status: TOKEN_STATUS.WAITING,
             statusHistory: [{ from: null, to: TOKEN_STATUS.WAITING, at: new Date(), byUserId: actor?.id }],

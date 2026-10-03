@@ -59,6 +59,7 @@ export const book = async (req, res) => {
     date: req.body.date,
     shift: req.body.shift,
     complaint: req.body.complaint,
+    conditions: req.body.conditions,
     actor: req.user,
   });
   res.status(201).json({ ok: true, data });
