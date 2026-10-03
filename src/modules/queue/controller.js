@@ -7,7 +7,10 @@ export const getQueue = async (req, res) => {
 };
 
 export const callNext = async (req, res) => {
-  const data = await service.callNext({ doctorId: req.params.doctorId, actor: req.user });
+  const data = await service.callNext({
+    doctorId: req.params.doctorId, actor: req.user,
+    outcome: req.body?.outcome, outcomeNotes: req.body?.outcomeNotes,
+  });
   res.json({ ok: true, data });
 };
 
@@ -62,7 +65,7 @@ export const book = async (req, res) => {
 };
 
 export const cancel = async (req, res) => {
-  const data = await service.cancelToken({ tokenId: req.params.tokenId, actor: req.user });
+  const data = await service.cancelToken({ tokenId: req.params.tokenId, actor: req.user, reason: req.body?.reason });
   res.json({ ok: true, data });
 };
 

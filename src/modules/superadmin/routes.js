@@ -14,6 +14,8 @@ import { clinicDate } from '../../lib/dates.js';
 import { getConsole } from './console.js';
 import * as staff from './staff.js';
 import * as patients from './patients.js';
+import * as billing from './billing.js';
+import { setBillingOverride } from '../../services/trials.js';
 
 export const superadminRoutes = Router();
 superadminRoutes.use(requireAuth, asyncHandler(requireActiveUser), requireRole(ROLES.SUPER_ADMIN));
@@ -324,3 +326,48 @@ superadminRoutes.get('/metrics', asyncHandler(async (req, res) => {
     },
   });
 }));
+
+// ---- Platform billing (Super Admin only: these are commercial terms) ----
+superadminRoutes.get('/billing/settings', asyncHandler(async (req, res) => {
+  res.json({ ok: true, data: await billing.readSettings() });
+}));
+superadminRoutes.put(
+  '/billing/settings',
+  validate({
+    body: z.object({
+      onlineRatePaise: z.coerce.number().int().min(0).optional(),
+      offlineRatePaise: z.coerce.number().int().min(0).optional(),
+      chargeMode: z.enum(['RUPEES', 'PERCENT', 'CUSTOM']).optional(),
+      percentBps: z.coerce.number().int().min(0).max(10000).optional(),
+      maxTrialDays: z.coerce.number().int().min(0).max(3650).optional(),
+      defaultTrialDays: z.coerce.number().int().min(0).max(3650).optional(),
+      maxMonthlyChargePaise: z.coerce.number().int().min(0).optional(),
+      arrearsFlagPaise: z.coerce.number().int().min(0).optional(),
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    res.json({ ok: true, data: await billing.updateSettings({ patch: req.body, actor: req.user, ip: req.ip, userAgent: req.get('user-agent') }) });
+  }),
+);
+superadminRoutes.get('/billing/overview', asyncHandler(async (req, res) => {
+  res.json({ ok: true, data: await billing.overview() });
+}));
+superadminRoutes.get('/billing/charges/:hospitalId', asyncHandler(async (req, res) => {
+  res.json({ ok: true, data: await billing.chargesFor({ hospitalId: req.params.hospitalId, month: req.query.month }) });
+}));
+superadminRoutes.put(
+  '/billing/override/:hospitalId',
+  validate({
+    body: z.object({
+      chargeMode: z.enum(['RUPEES', 'PERCENT', 'CUSTOM']).nullable().optional(),
+      onlineRatePaise: z.coerce.number().int().min(0).nullable().optional(),
+      offlineRatePaise: z.coerce.number().int().min(0).nullable().optional(),
+      percentBps: z.coerce.number().int().min(0).max(10000).nullable().optional(),
+      maxMonthlyChargePaise: z.coerce.number().int().min(0).nullable().optional(),
+      note: z.string().max(300).optional(),
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    res.json({ ok: true, data: await setBillingOverride({ hospitalId: req.params.hospitalId, patch: req.body, actor: req.user, ip: req.ip, userAgent: req.get('user-agent') }) });
+  }),
+);

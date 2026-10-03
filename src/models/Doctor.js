@@ -42,6 +42,16 @@ const doctorSchema = new mongoose.Schema(
       updatedAt: { type: Date, default: null },
     },
 
+    /**
+     * Public rating, recomputed from APPROVED reviews whenever one is
+     * moderated. Denormalised so the nearby-search list does not need a
+     * per-doctor aggregate on every search.
+     */
+    rating: {
+      average: { type: Number, default: 0, min: 0, max: 5 },
+      count: { type: Number, default: 0, min: 0 },
+    },
+
     fees: {
       fresh: { type: Number, required: true, min: 0 },
       followup: { type: Number, required: true, min: 0 },

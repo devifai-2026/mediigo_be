@@ -7,8 +7,21 @@ const familyMemberSchema = new mongoose.Schema(
     relation: { type: String, enum: ['SELF', 'SPOUSE', 'CHILD', 'PARENT', 'SIBLING', 'OTHER'], default: 'OTHER' },
     dob: Date,
     gender: { type: String, enum: ['M', 'F', 'O'] },
+    // The account holder's own conditions. Family members carry their own.
+    conditions: { type: [String], default: [] },
     aadhaarHash: { type: String, default: null },
     phone: String,
+    /**
+     * Long-standing conditions a doctor should know before the consultation —
+     * diabetes, hypertension, asthma and the like. Per family member, because
+     * a child's history is not their parent's.
+     *
+     * Free text, not an enum: a coded list would be wrong the first time
+     * someone needs to declare something it does not contain, and a patient
+     * typing "thyroid" is more useful to the doctor than a dropdown that
+     * omits it.
+     */
+    conditions: { type: [String], default: [] },
   },
   { _id: true, timestamps: false },
 );

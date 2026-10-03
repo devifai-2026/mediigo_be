@@ -1,6 +1,7 @@
 import argon2 from 'argon2';
 import { User } from '../../models/User.js';
 import { OtpVerification } from '../../models/OtpVerification.js';
+import { Hospital } from '../../models/Hospital.js';
 import { generateOtp, hashOtp, otpExpiryDate } from '../../lib/otp.js';
 import { getMessagingProvider, getWaSettings } from '../../lib/providers/index.js';
 import { last10Digits, isValidIndianMobile } from '../../lib/phone.js';
@@ -215,5 +216,26 @@ export const getMe = async (userId) => {
   const user = await User.findById(userId).lean();
   if (!user) throw unauthenticated();
   delete user.passwordHash;
+
+  /**
+   * Clinic staff carry their clinic's trial state, so the portal can show how
+   * long is left without a second round-trip on every page.
+   *
+   * Deliberately informational only. Nothing downstream gates on these fields:
+   * an expired trial starts billing, it never closes the portal.
+   */
+  if (user.hospitalId) {
+    const hospital = await Hospital.findById(user.hospitalId, { name: 1, trial: 1 }).lean();
+    if (hospital) {
+      const endsAt = hospital.trial?.endsAt ?? null;
+      user.clinic = {
+        id: String(hospital._id),
+        name: hospital.name,
+        trialEndsAt: endsAt,
+        trialDaysLeft: endsAt ? Math.ceil((new Date(endsAt).getTime() - Date.now()) / 86400000) : null,
+        isBillable: endsAt ? new Date(endsAt).getTime() <= Date.now() : false,
+      };
+    }
+  }
   return user;
 };

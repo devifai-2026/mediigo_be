@@ -11,6 +11,7 @@ import { patientRoutes } from './modules/patients/routes.js';
 import { standeeRoutes } from './modules/standees/routes.js';
 import { superadminRoutes } from './modules/superadmin/routes.js';
 import { ticketRoutes } from './modules/tickets/routes.js';
+import { reviewRoutes } from './modules/reviews/routes.js';
 
 // Single mount point for every route in the app.
 export const mountRoutes = (app) => {
@@ -23,6 +24,7 @@ export const mountRoutes = (app) => {
   app.use('/api/pos', posRoutes);
   app.use('/api/policy', policyRoutes);
   app.use('/api/onboarding', onboardingRoutes);
+  app.use('/api/reviews', reviewRoutes);
   app.use('/api/standees', standeeRoutes);
   app.use('/api/admin', adminRoutes);
   app.use('/api/superadmin', superadminRoutes);

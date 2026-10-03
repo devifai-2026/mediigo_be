@@ -1,7 +1,7 @@
 {
   "name": "mediigo-server",
   "version": "1.0.0",
-  "description": "Mediigo — healthcare OPD queue management & clinic onboarding platform",
+  "description": "Mediigo \u2014 healthcare OPD queue management & clinic onboarding platform",
   "type": "module",
   "main": "src/index.js",
   "engines": {
@@ -14,7 +14,8 @@
     "seed:force": "node scripts/seed.js --force",
     "superadmin": "node scripts/create-superadmin.js",
     "test:pos": "node scripts/test-pos-concurrency.js",
-    "lint": "eslint src scripts"
+    "lint": "eslint src scripts",
+    "seed:billing": "node scripts/seed-billing.js"
   },
   "dependencies": {
     "@google-cloud/storage": "^7.22.0",

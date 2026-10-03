@@ -13,6 +13,7 @@ import {
   NETWORK_STATE, SUBMISSION_STATUS, TOKEN_STATUS, IN_FLIGHT_STATUSES,
   STANDEE_STATUS, ROLES, RESPONSE_CODES, AUDIT_ACTIONS,
 } from '../config/constants.js';
+import { buildTrial } from './trials.js';
 
 // Every legal transition in one frozen map. No controller sets networkState
 // directly — they all go through assertTransition.
@@ -62,7 +63,7 @@ const withDoctorTitle = (raw) => {
  * secure, but is shown exactly once, so an approver who does not write it down
  * leaves an account nobody can log into. Passing a password avoids that.
  */
-export const approveSubmission = async ({ submissionId, actor, ip, userAgent, password }) => {
+export const approveSubmission = async ({ submissionId, actor, ip, userAgent, password, trialDays }) => {
   const submission = await OnboardingSubmission.findById(submissionId);
   if (!submission) throw notFound('Submission not found');
   assertSubmissionScope(actor, submission);
@@ -94,6 +95,10 @@ export const approveSubmission = async ({ submissionId, actor, ip, userAgent, pa
           location: { type: 'Point', coordinates: [submission.geocodeResult.lng, submission.geocodeResult.lat] },
           geocode: { source: 'GOOGLE', accuracy: submission.geocodeResult.accuracy, geocodedAt: new Date() },
           subscriptionPlan: p.subscriptionPlan || 'FREE',
+          // Free trial starts the moment the clinic goes live, not when the
+          // submission was filed — a clinic waiting a week on approval should
+          // not lose a week of trial to our own queue.
+          trial: await buildTrial({ days: trialDays, actor }),
           networkState: NETWORK_STATE.ACTIVE,
           onboardedBy: submission.agentId,
           approvedBy: actor.id,

@@ -14,6 +14,7 @@ import {
   TOKEN_STATUS, TOKEN_SOURCE, NETWORK_STATE, RESPONSE_CODES, ROLES,
   BREAK_REASONS, BREAK_DURATIONS,
 } from '../../config/constants.js';
+import { recordTokenChargeSafe } from '../../services/billing.js';
 
 const loadDoctorAndHospital = async (doctorId) => {
   const doctor = await Doctor.findById(doctorId);
@@ -32,15 +33,26 @@ export const getQueue = async ({ doctorId, date, actor }) => {
   return buildQueueSnapshot(doctor._id, day, { includePii });
 };
 
-const transition = async (token, to, { actor, reason } = {}) => {
+const transition = async (token, to, { actor, reason, outcome, outcomeNotes } = {}) => {
   const from = token.status;
   const patch = { status: to, $push: undefined };
   const now = new Date();
   if (to === TOKEN_STATUS.IN_CHAMBER) patch.enteredChamberAt = now;
-  if (to === TOKEN_STATUS.COMPLETED) patch.completedAt = now;
+  if (to === TOKEN_STATUS.COMPLETED) {
+    patch.completedAt = now;
+    // How the consultation ended. Defaults to DONE so a doctor who just taps
+    // "next patient" is not forced through a dialog on every single token.
+    if (outcome) patch.outcome = outcome;
+    if (outcomeNotes !== undefined) patch.outcomeNotes = String(outcomeNotes || '').trim();
+  }
   if (to === TOKEN_STATUS.SKIPPED) {
     patch.skippedAt = now;
     patch.skipReason = reason || 'Not present';
+  }
+  if (to === TOKEN_STATUS.CANCELLED) {
+    patch.cancelledAt = now;
+    patch.cancelledBy = actor?.id ?? null;
+    patch.cancelReason = reason || 'Cancelled';
   }
   delete patch.$push;
 
@@ -63,7 +75,7 @@ const transition = async (token, to, { actor, reason } = {}) => {
  * step for the doctor, so it happens here rather than requiring two API calls —
  * the prototype's advanceToken() behaviour, but with explicit status history.
  */
-export const callNext = async ({ doctorId, actor }) => {
+export const callNext = async ({ doctorId, actor, outcome, outcomeNotes }) => {
   const { doctor, hospital } = await loadDoctorAndHospital(doctorId);
   assertDoctorScope(actor, doctor);
   const date = clinicDate(hospital.timezone);
@@ -74,7 +86,7 @@ export const callNext = async ({ doctorId, actor }) => {
 
   // Close out whoever is in the chamber.
   const current = await OPDToken.findOne({ doctorId: doctor._id, date, status: TOKEN_STATUS.IN_CHAMBER });
-  if (current) await transition(current, TOKEN_STATUS.COMPLETED, { actor });
+  if (current) await transition(current, TOKEN_STATUS.COMPLETED, { actor, outcome, outcomeNotes });
 
   const next = await OPDToken.findOne({ doctorId: doctor._id, date, status: TOKEN_STATUS.WAITING })
     .sort({ tokenNumber: 1 });
@@ -109,7 +121,7 @@ export const recall = async ({ doctorId, actor }) => {
   return { tokenNumber: current.tokenNumber, recalled: true };
 };
 
-export const setTokenStatus = async ({ tokenId, to, reason, actor }) => {
+export const setTokenStatus = async ({ tokenId, to, reason, actor, outcome, outcomeNotes }) => {
   const token = await OPDToken.findById(tokenId);
   if (!token) throw notFound('Token not found');
   assertTokenScope(actor, token);
@@ -119,12 +131,17 @@ export const setTokenStatus = async ({ tokenId, to, reason, actor }) => {
     [TOKEN_STATUS.IN_CHAMBER]: [TOKEN_STATUS.COMPLETED, TOKEN_STATUS.SKIPPED],
     [TOKEN_STATUS.SKIPPED]: [TOKEN_STATUS.WAITING],
     [TOKEN_STATUS.COMPLETED]: [],
+    // Terminal, and deliberately listed rather than left to fall through: a
+    // cancelled token is not restorable. The patient books again, which gets a
+    // new token at the back of the queue — restoring the old one would hand
+    // back a place they gave up.
+    [TOKEN_STATUS.CANCELLED]: [],
   };
   if (!legal[token.status]?.includes(to)) {
     throw conflict(`Cannot move a token from ${token.status} to ${to}`, RESPONSE_CODES.ILLEGAL_TRANSITION);
   }
 
-  const updated = await transition(token, to, { actor, reason });
+  const updated = await transition(token, to, { actor, reason, outcome, outcomeNotes });
   await emitQueueSnapshot(token.doctorId, token.date);
   return updated;
 };
@@ -261,6 +278,10 @@ export const bookToken = async ({ doctorId, patientId, familyMemberId, visitType
 
       emitTokenCreated(created);
       await emitQueueSnapshot(doctor._id, date);
+      // Platform billing, deliberately AFTER the transaction has committed and
+      // deliberately unawaited-on-failure: a clinic's commercial terms must
+      // never be the reason a patient cannot get a token.
+      recordTokenChargeSafe({ hospital, token: created });
       return created;
     } catch (err) {
       if (isDuplicateKey(err) && attempt < 4) {
@@ -277,17 +298,39 @@ export const bookToken = async ({ doctorId, patientId, familyMemberId, visitType
   throw conflict('Could not allocate a token, please retry', RESPONSE_CODES.TOKEN_ALLOC_EXHAUSTED);
 };
 
-export const cancelToken = async ({ tokenId, actor }) => {
+/**
+ * Cancel a waiting token.
+ *
+ * CANCELLED, not SKIPPED: a patient who withdrew and a patient who missed
+ * their call are different events, and reporting that cannot tell them apart
+ * is reporting nobody can act on.
+ *
+ * No refund, ever — including for a token already paid for at the desk. The
+ * patient is told this plainly before they confirm, and nothing here touches
+ * the Transaction: the money stays collected and the receipt stays valid.
+ * A genuine refund remains a separate, deliberate act at the front desk.
+ *
+ * Cancelling removes the token from the waiting list, so the doctor's next
+ * call simply reaches the following patient, and every published wait time
+ * drops by one consultation. Neither needs special handling here: the queue
+ * snapshot derives both from the live waiting list, and emitting it is what
+ * pushes the corrected timer to every screen.
+ */
+export const cancelToken = async ({ tokenId, actor, reason }) => {
   const token = await OPDToken.findById(tokenId);
   if (!token) throw notFound('Token not found');
   assertTokenScope(actor, token);
   if (token.status !== TOKEN_STATUS.WAITING) {
-    throw conflict('Only a waiting token can be cancelled');
+    throw conflict(
+      token.status === TOKEN_STATUS.IN_CHAMBER
+        ? 'This patient is already with the doctor and cannot be cancelled'
+        : 'Only a waiting token can be cancelled',
+    );
   }
-  if (token.isPaid) {
-    throw conflict('This token has been paid for — the front desk must process a refund');
-  }
-  const updated = await transition(token, TOKEN_STATUS.SKIPPED, { actor, reason: 'Cancelled by patient' });
+  const updated = await transition(token, TOKEN_STATUS.CANCELLED, {
+    actor,
+    reason: reason?.trim() || 'Cancelled by patient',
+  });
   await emitQueueSnapshot(token.doctorId, token.date);
   return updated;
 };

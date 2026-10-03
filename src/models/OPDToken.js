@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import { TOKEN_STATUS, VISIT_TYPE, TOKEN_SOURCE, SHIFT } from '../config/constants.js';
+import { CONSULT_OUTCOME, TOKEN_STATUS, VISIT_TYPE, TOKEN_SOURCE, SHIFT } from '../config/constants.js';
 
 const opdTokenSchema = new mongoose.Schema(
   {
@@ -21,6 +21,13 @@ const opdTokenSchema = new mongoose.Schema(
       age: Number,
       gender: String,
       complaint: String,
+      /**
+       * Pre-existing conditions, copied at booking rather than read live from
+       * the patient record. The doctor must see what was declared for THIS
+       * visit: a condition added next year does not belong on last year's
+       * consultation, and one removed must not vanish from it either.
+       */
+      conditions: { type: [String], default: [] },
     },
 
     // Which sitting this token belongs to. Token numbers restart per shift, so
@@ -34,6 +41,22 @@ const opdTokenSchema = new mongoose.Schema(
     standeeId: { type: mongoose.Schema.Types.ObjectId, ref: 'QRStandee', default: null },
 
     status: { type: String, enum: Object.values(TOKEN_STATUS), default: TOKEN_STATUS.WAITING },
+
+    /**
+     * How the consultation ended, set when the doctor completes the token.
+     * Null on anything not yet completed.
+     */
+    outcome: { type: String, enum: [null, ...Object.values(CONSULT_OUTCOME)], default: null },
+    outcomeNotes: { type: String, default: '' },
+
+    /**
+     * Cancellation. Money is deliberately NOT touched here: a cancelled token
+     * is never refunded, which is stated to the patient before they confirm.
+     * Any refund remains a separate, deliberate act at the desk.
+     */
+    cancelledAt: { type: Date, default: null },
+    cancelledBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    cancelReason: { type: String, default: '' },
     // Append-only. This is what settles "I was skipped unfairly" disputes.
     statusHistory: [
       {

@@ -11,6 +11,8 @@ export const approve = async (req, res) => {
     submissionId: req.params.id,
     // An empty string means "pick one for me", not "set an empty password".
     password: req.body?.password || undefined,
+    // Omitted means "use the platform default", which buildTrial resolves.
+    trialDays: req.body?.trialDays,
     ...meta(req),
   });
   res.json({ ok: true, data });

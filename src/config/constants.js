@@ -74,6 +74,26 @@ export const TOKEN_SOURCE = {
   PHONE: 'PHONE',
 };
 
+/**
+ * How a consultation ended. Recorded when the doctor completes a token — the
+ * token still COMPLETES and the queue still advances, because a patient sent
+ * for tests has finished with the doctor either way. Keeping this separate
+ * from TOKEN_STATUS is deliberate: queue mechanics and clinical outcome are
+ * different questions, and conflating them would make every status-based
+ * report ambiguous.
+ */
+export const CONSULT_OUTCOME = {
+  DONE: 'DONE',
+  TESTS: 'TESTS',
+  ADMITTED: 'ADMITTED',
+};
+
+export const REVIEW_STATUS = {
+  PENDING: 'PENDING',
+  APPROVED: 'APPROVED',
+  REJECTED: 'REJECTED',
+};
+
 export const SUBMISSION_STATUS = {
   DRAFT: 'DRAFT',
   SUBMITTED: 'SUBMITTED',
@@ -167,4 +187,10 @@ export const AUDIT_ACTIONS = {
   SECURITY_POLICY_UPDATED: 'SECURITY_POLICY_UPDATED',
   USER_CREATED: 'USER_CREATED',
   USER_DEACTIVATED: 'USER_DEACTIVATED',
+  TRIAL_GRANTED: 'TRIAL_GRANTED',
+  BILLING_SETTINGS_UPDATED: 'BILLING_SETTINGS_UPDATED',
+  BILLING_OVERRIDE_UPDATED: 'BILLING_OVERRIDE_UPDATED',
+  CHARGE_WAIVED: 'CHARGE_WAIVED',
+  REVIEW_MODERATED: 'REVIEW_MODERATED',
+  TOKEN_CANCELLED: 'TOKEN_CANCELLED',
 };

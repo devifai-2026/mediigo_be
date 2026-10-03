@@ -16,6 +16,9 @@ export { WaSettings } from './WaSettings.js';
 export { Counter } from './Counter.js';
 export { DistanceCache } from './DistanceCache.js';
 export { Ticket, TICKET_STATUS, TICKET_PRIORITY, TICKET_CATEGORY } from './Ticket.js';
+export { BillingSettings, getBillingSettings } from './BillingSettings.js';
+export { BillingCharge } from './BillingCharge.js';
+export { Review } from './Review.js';
 
 import { User } from './User.js';
 import { District } from './District.js';
@@ -33,11 +36,14 @@ import { WaSettings } from './WaSettings.js';
 import { Counter } from './Counter.js';
 import { DistanceCache } from './DistanceCache.js';
 import { Ticket } from './Ticket.js';
+import { BillingSettings } from './BillingSettings.js';
+import { BillingCharge } from './BillingCharge.js';
+import { Review } from './Review.js';
 
 export const allModels = [
   User, District, Hospital, Doctor, Specialty, QRStandee, OPDToken, Transaction,
   PatientPolicy, OnboardingSubmission, AuditLog, OtpVerification,
-  WaSettings, Counter, DistanceCache, Ticket,
+  WaSettings, Counter, DistanceCache, Ticket, BillingSettings, BillingCharge, Review,
 ];
 
 export const syncAllIndexes = async () => {

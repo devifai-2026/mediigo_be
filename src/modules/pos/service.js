@@ -14,6 +14,7 @@ import {
   RESPONSE_CODES, AUDIT_ACTIONS,
 } from '../../config/constants.js';
 import { emitQueueSnapshot, emitTokenCreated, emitTransactionRecorded } from '../../realtime/emitters.js';
+import { recordTokenChargeSafe } from '../../services/billing.js';
 
 const MAX_ALLOC_RETRIES = 5;
 
@@ -227,6 +228,13 @@ export const createWalkin = async ({ body, actor, ip, userAgent }) => {
           totalFee: result.transaction.totalFee,
           receiptNumber: result.transaction.receiptNumber,
         },
+      });
+      // Platform billing. The consultation fee is passed because PERCENT mode
+      // bills a share of it; flat-rate modes ignore it.
+      recordTokenChargeSafe({
+        hospital,
+        token: result.token,
+        consultationFee: result.transaction.totalFee,
       });
 
       return result;

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { TOKEN_STATUS, VISIT_TYPE, BREAK_REASONS, BREAK_DURATIONS, SHIFT } from '../../config/constants.js';
+import { CONSULT_OUTCOME, TOKEN_STATUS, VISIT_TYPE, BREAK_REASONS, BREAK_DURATIONS, SHIFT } from '../../config/constants.js';
 
 export const queryDate = {
   query: z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() }),
@@ -9,7 +9,18 @@ export const statusSchema = {
   body: z.object({
     status: z.enum([TOKEN_STATUS.IN_CHAMBER, TOKEN_STATUS.COMPLETED, TOKEN_STATUS.SKIPPED, TOKEN_STATUS.WAITING]),
     reason: z.string().max(200).optional(),
+    // Only meaningful when completing. Ignored otherwise.
+    outcome: z.enum(Object.values(CONSULT_OUTCOME)).optional(),
+    outcomeNotes: z.string().max(500).optional(),
   }),
+};
+
+// Sent when the doctor finishes a patient and calls the next one.
+export const callNextSchema = {
+  body: z.object({
+    outcome: z.enum(Object.values(CONSULT_OUTCOME)).optional(),
+    outcomeNotes: z.string().max(500).optional(),
+  }).optional(),
 };
 
 export const breakSchema = {
