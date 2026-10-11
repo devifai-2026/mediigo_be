@@ -15,7 +15,8 @@
     "superadmin": "node scripts/create-superadmin.js",
     "test:pos": "node scripts/test-pos-concurrency.js",
     "lint": "eslint src scripts",
-    "seed:billing": "node scripts/seed-billing.js"
+    "seed:billing": "node scripts/seed-billing.js",
+    "seed:edge": "node scripts/seed-edge-cases.js"
   },
   "dependencies": {
     "@google-cloud/storage": "^7.22.0",

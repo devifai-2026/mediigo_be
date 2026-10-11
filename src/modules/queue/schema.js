@@ -60,3 +60,22 @@ export const rescheduleSchema = {
 export const bookingOpenSchema = {
   body: z.object({ isOpen: z.boolean() }),
 };
+
+// ---- Doctor-booked follow-ups ----
+
+export const followUpSchema = {
+  body: z.object({
+    date: z.string().regex(DATE_RE, 'Expected YYYY-MM-DD'),
+    shift: z.enum(Object.values(SHIFT)).optional(),
+    // What the patient should come back for, shown to them and on the roster.
+    note: z.string().trim().max(300).optional(),
+  }),
+};
+
+export const followUpRespondSchema = {
+  body: z.object({ attending: z.boolean() }),
+};
+
+export const followUpReleaseSchema = {
+  body: z.object({ reason: z.string().trim().max(200).optional() }).optional(),
+};

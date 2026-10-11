@@ -88,6 +88,32 @@ export const CONSULT_OUTCOME = {
   ADMITTED: 'ADMITTED',
 };
 
+/**
+ * A follow-up the doctor booked for a patient, awaiting the patient's answer.
+ * Lives on the follow-up token itself (token.followUp.status), separate from
+ * TOKEN_STATUS: the token is an ordinary WAITING token in the queue either
+ * way, and this records whether the patient has said they will come.
+ *
+ *   PENDING   — booked by the doctor, patient has not answered
+ *   CONFIRMED — patient said they will attend
+ *   DECLINED  — patient said they cannot; the token is cancelled
+ *   RELEASED  — clinic freed the slot (no answer, or not coming); cancelled
+ */
+export const FOLLOWUP_STATUS = {
+  PENDING: 'PENDING',
+  CONFIRMED: 'CONFIRMED',
+  DECLINED: 'DECLINED',
+  RELEASED: 'RELEASED',
+};
+
+// How far ahead a doctor may book a follow-up. Wider than a patient's own
+// booking horizon: "come back in six weeks" is ordinary clinical advice.
+export const FOLLOWUP_HORIZON_DAYS = 90;
+
+// The patient is asked to answer this long before the sitting starts, so a
+// slot nobody is coming for can still be given to someone else.
+export const FOLLOWUP_RESPOND_LEAD_HOURS = 12;
+
 export const REVIEW_STATUS = {
   PENDING: 'PENDING',
   APPROVED: 'APPROVED',
@@ -168,6 +194,8 @@ export const SOCKET_EVENTS = {
   HOSPITAL_DEBOARDED: 'HOSPITAL_DEBOARDED',
   SUBMISSION_STATUS_CHANGED: 'SUBMISSION_STATUS_CHANGED',
   TRANSACTION_RECORDED: 'TRANSACTION_RECORDED',
+  // A token taken off a doctor's list by someone other than that doctor.
+  TOKEN_CANCELLED: 'TOKEN_CANCELLED',
 };
 
 export const AUDIT_ACTIONS = {
@@ -193,4 +221,7 @@ export const AUDIT_ACTIONS = {
   CHARGE_WAIVED: 'CHARGE_WAIVED',
   REVIEW_MODERATED: 'REVIEW_MODERATED',
   TOKEN_CANCELLED: 'TOKEN_CANCELLED',
+  PRESCRIPTION_WRITTEN: 'PRESCRIPTION_WRITTEN',
+  PETTY_EXPENSE_LOGGED: 'PETTY_EXPENSE_LOGGED',
+  PETTY_EXPENSE_VOIDED: 'PETTY_EXPENSE_VOIDED',
 };

@@ -99,8 +99,8 @@ export const closureReason = (doctor, date) => {
  * Today's past sittings are marked closed rather than hidden — "Morning (ended)"
  * tells a patient why they cannot pick it, where a missing row does not.
  */
-export const doctorAvailability = async ({ doctor, timezone, now = new Date() }) => {
-  const dates = bookableDates(timezone);
+export const doctorAvailability = async ({ doctor, timezone, now = new Date(), days = BOOKING_HORIZON_DAYS }) => {
+  const dates = bookableDates(timezone, days);
   const today = dates[0];
   const nowMinutes = (() => {
     const hhmm = new Intl.DateTimeFormat('en-GB', {
@@ -154,10 +154,12 @@ export const doctorAvailability = async ({ doctor, timezone, now = new Date() })
  * Booking guard. Returns the matching shift, or throws-worthy null with a
  * reason the caller can surface verbatim.
  */
-export const resolveBookableShift = async ({ doctor, date, shift, timezone, now = new Date(), checkCapacity = true }) => {
-  const dates = bookableDates(timezone);
+export const resolveBookableShift = async ({
+  doctor, date, shift, timezone, now = new Date(), checkCapacity = true, horizonDays = BOOKING_HORIZON_DAYS,
+}) => {
+  const dates = bookableDates(timezone, horizonDays);
   if (!dates.includes(date)) {
-    return { ok: false, reason: `Bookings open only for the next ${BOOKING_HORIZON_DAYS} days` };
+    return { ok: false, reason: `Bookings open only for the next ${horizonDays} days` };
   }
 
   const shifts = shiftsOn(doctor, date);

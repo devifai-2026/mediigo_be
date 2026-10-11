@@ -21,6 +21,11 @@ const submissionSchema = new mongoose.Schema(
       accuracy: String,
     },
 
+    // When the agent sent it for review — the start of the approval wait.
+    submittedAt: { type: Date, default: null },
+    // The agent's prospect this came from, if any.
+    leadId: { type: mongoose.Schema.Types.ObjectId, ref: 'ClinicLead', default: null },
+
     reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     reviewedAt: Date,
     reviewNotes: String,

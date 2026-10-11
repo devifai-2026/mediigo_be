@@ -12,6 +12,7 @@ import { notFound, validationError } from '../../lib/errors.js';
 import { ROLES, NETWORK_STATE, TOKEN_STATUS, AUDIT_ACTIONS, VISIT_TYPE, TOKEN_SOURCE } from '../../config/constants.js';
 import { clinicDate } from '../../lib/dates.js';
 import { getConsole } from './console.js';
+import { networkAnalytics, pettyCashAudit, liveOpd } from './network.js';
 import * as staff from './staff.js';
 import * as patients from './patients.js';
 import * as billing from './billing.js';
@@ -25,6 +26,29 @@ superadminRoutes.use(requireAuth, asyncHandler(requireActiveUser), requireRole(R
 // serving it in a single request avoids 8 round-trips on every tab switch.
 superadminRoutes.get('/console', asyncHandler(async (_req, res) => {
   res.json({ ok: true, data: await getConsole() });
+}));
+
+// ---- Network analytics, financial audit and the live OPD monitor ----
+const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const rangeQuery = {
+  query: z.object({
+    from: isoDate.optional(),
+    to: isoDate.optional(),
+    period: z.enum(['day', 'week', 'month', '6month', 'year']).optional(),
+    hospitalId: z.string().regex(/^[a-f0-9]{24}$/i).optional(),
+  }),
+};
+
+superadminRoutes.get('/network', validate(rangeQuery), asyncHandler(async (req, res) => {
+  res.json({ ok: true, data: await networkAnalytics(req.query) });
+}));
+
+superadminRoutes.get('/petty-cash', validate(rangeQuery), asyncHandler(async (req, res) => {
+  res.json({ ok: true, data: await pettyCashAudit(req.query) });
+}));
+
+superadminRoutes.get('/live', asyncHandler(async (_req, res) => {
+  res.json({ ok: true, data: await liveOpd() });
 }));
 
 // ---- Patients master ----

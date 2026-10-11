@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { z } from 'zod';
 import * as service from './service.js';
 import { suggestAddresses, resolvePlace, placesEnabled } from './lookup.js';
+import * as leads from './leads.js';
+import { VISIT_OUTCOME } from '../../models/index.js';
 import { asyncHandler } from '../../lib/asyncHandler.js';
 import { validate } from '../../middleware/validate.js';
 import { requireAuth, requireActiveUser } from '../../middleware/auth.js';
@@ -16,6 +18,37 @@ const createSchema = {
     districtId: z.string().optional(),
     payload: z.record(z.any()),
     documents: z.array(z.object({ kind: z.string(), url: z.string() })).optional(),
+    leadId: z.string().regex(/^[a-f0-9]{24}$/i).optional(),
+  }),
+};
+
+const phone = z.string().trim().regex(/^\d{10}$/, 'Enter a 10-digit mobile number').optional().or(z.literal(''));
+const when = z.coerce.date().optional().nullable();
+const leadFields = {
+  clinicName: z.string().trim().min(2, 'Clinic name is required').max(120),
+  contactName: z.string().trim().max(80).optional(),
+  contactPhone: phone,
+  specialty: z.string().trim().max(60).optional(),
+  address: z.object({
+    line1: z.string().trim().max(200).optional(),
+    city: z.string().trim().max(60).optional(),
+    pincode: z.string().trim().regex(/^\d{6}$/, 'Pincode is 6 digits').optional().or(z.literal('')),
+  }).optional(),
+  notes: z.string().trim().max(1000).optional(),
+  nextVisitAt: when,
+};
+const visitBody = z.object({
+  outcome: z.enum(Object.values(VISIT_OUTCOME).filter((o) => o !== 'ONBOARDED')),
+  note: z.string().trim().max(1000).optional(),
+  nextVisitAt: when,
+});
+const createLeadSchema = { body: z.object({ ...leadFields, visit: visitBody.optional() }) };
+const updateLeadSchema = { body: z.object(leadFields).partial() };
+const visitSchema = { body: visitBody };
+const perfSchema = {
+  query: z.object({
+    month: z.string().regex(/^\d{4}-\d{2}$/).optional(),
+    agentId: z.string().regex(/^[a-f0-9]{24}$/i).optional(),
   }),
 };
 
@@ -59,4 +92,36 @@ onboardingRoutes.get(
 onboardingRoutes.get(
   '/submissions/:id',
   asyncHandler(async (req, res) => res.json({ ok: true, data: await service.getById({ id: req.params.id, actor: req.user }) })),
+);
+
+// ---- Field agent follow-ups and performance ----
+
+onboardingRoutes.get(
+  '/leads',
+  requireRole(ROLES.FIELD_AGENT, ROLES.EXEC_ADMIN, ROLES.SUPER_ADMIN),
+  asyncHandler(async (req, res) => res.json({ ok: true, data: await leads.listLeads({ actor: req.user, query: req.query }) })),
+);
+onboardingRoutes.post(
+  '/leads',
+  requireRole(ROLES.FIELD_AGENT),
+  validate(createLeadSchema),
+  asyncHandler(async (req, res) => res.status(201).json({ ok: true, data: await leads.createLead({ body: req.body, actor: req.user }) })),
+);
+onboardingRoutes.patch(
+  '/leads/:id',
+  requireRole(ROLES.FIELD_AGENT, ROLES.SUPER_ADMIN),
+  validate(updateLeadSchema),
+  asyncHandler(async (req, res) => res.json({ ok: true, data: await leads.updateLead({ id: req.params.id, body: req.body, actor: req.user }) })),
+);
+onboardingRoutes.post(
+  '/leads/:id/visits',
+  requireRole(ROLES.FIELD_AGENT, ROLES.SUPER_ADMIN),
+  validate(visitSchema),
+  asyncHandler(async (req, res) => res.json({ ok: true, data: await leads.logVisit({ id: req.params.id, body: req.body, actor: req.user }) })),
+);
+onboardingRoutes.get(
+  '/performance',
+  requireRole(ROLES.FIELD_AGENT, ROLES.EXEC_ADMIN, ROLES.SUPER_ADMIN),
+  validate(perfSchema),
+  asyncHandler(async (req, res) => res.json({ ok: true, data: await leads.agentPerformance({ actor: req.user, query: req.query }) })),
 );

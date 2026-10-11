@@ -28,7 +28,7 @@ export const getById = async (doctorId) => {
   const doctor = await Doctor.findById(doctorId).lean();
   if (!doctor || !doctor.isActive) throw notFound('Doctor not found');
   const hospital = await Hospital.findById(doctor.hospitalId)
-    .select('name code address location networkState contactPhone')
+    .select('name code address location networkState contactPhone photos')
     .lean();
   // A patient must not be able to deep-link into a clinic that is no longer on
   // the network.

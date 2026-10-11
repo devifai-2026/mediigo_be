@@ -8,11 +8,12 @@ import { assertDoctorScope, assertTokenScope, assertHospitalScope } from '../../
 import { buildQueueSnapshot } from '../../services/queueSnapshot.js';
 import {
   emitQueueSnapshot, emitCallNext, emitTokenStatusChanged, emitTokenCreated,
-  emitDoctorBreak, emitDoctorSession,
+  emitDoctorBreak, emitDoctorSession, emitTokenCancelled,
 } from '../../realtime/emitters.js';
+import { writeAuditLog } from '../../lib/auditLog.js';
 import {
   TOKEN_STATUS, TOKEN_SOURCE, NETWORK_STATE, RESPONSE_CODES, ROLES,
-  BREAK_REASONS, BREAK_DURATIONS,
+  BREAK_REASONS, BREAK_DURATIONS, FOLLOWUP_STATUS, AUDIT_ACTIONS,
 } from '../../config/constants.js';
 import { recordTokenChargeSafe } from '../../services/billing.js';
 
@@ -33,7 +34,7 @@ export const getQueue = async ({ doctorId, date, actor }) => {
   return buildQueueSnapshot(doctor._id, day, { includePii });
 };
 
-const transition = async (token, to, { actor, reason, outcome, outcomeNotes } = {}) => {
+export const transition = async (token, to, { actor, reason, outcome, outcomeNotes } = {}) => {
   const from = token.status;
   const patch = { status: to, $push: undefined };
   const now = new Date();
@@ -242,6 +243,45 @@ export const bookToken = async ({ doctorId, patientId, familyMemberId, visitType
     ? (patient.familyMembers || []).find((m) => String(m._id) === String(familyMemberId))
     : null;
 
+  const created = await allocateToken({
+    doctor, hospital, date, shift,
+    fields: {
+      ...shiftTimes,
+      doctorId: doctor._id, hospitalId: hospital._id, patientId: patient._id,
+      familyMemberId: member?._id ?? null,
+      patientSnapshot: {
+        name: member?.name || patient.name,
+        phone: patient.phone,
+        gender: member?.gender || patient.gender,
+        // Frozen at booking: the roster shows the age they were seen at,
+        // and a dob edited later must not rewrite an old consultation.
+        age: ageFrom(member?.dob || patient.dob),
+        complaint: complaint?.trim() || '',
+        // Frozen with the rest of the snapshot: what was declared for
+        // THIS visit, not whatever the profile says years later.
+        conditions: Array.isArray(conditions)
+          ? conditions.map((c) => String(c).trim()).filter(Boolean).slice(0, 20)
+          : (member?.conditions ?? []),
+      },
+      visitType, source: TOKEN_SOURCE.APP, status: TOKEN_STATUS.WAITING,
+      statusHistory: [{ from: null, to: TOKEN_STATUS.WAITING, at: new Date(), byUserId: actor?.id }],
+      isPaid: false, bookedBy: actor?.id ?? patient._id,
+    },
+  });
+
+  // Platform billing, deliberately AFTER the transaction has committed and
+  // deliberately unawaited-on-failure: a clinic's commercial terms must
+  // never be the reason a patient cannot get a token.
+  recordTokenChargeSafe({ hospital, token: created });
+  return created;
+};
+
+/**
+ * Allocate the next token number in a sitting and create the token, retrying
+ * on a number collision. Shared by patient booking and doctor-booked
+ * follow-ups, so both go through the same counter and the same unique index.
+ */
+export const allocateToken = async ({ doctor, hospital, date, shift, fields }) => {
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const session = await mongoose.startSession();
     try {
@@ -254,39 +294,15 @@ export const bookToken = async ({ doctorId, patientId, familyMemberId, visitType
           expiresAt: endOfClinicDay(date, hospital.timezone),
         });
         const [token] = await OPDToken.create(
-          [{
-            tokenNumber, date, shift: shift ?? undefined, ...shiftTimes,
-            doctorId: doctor._id, hospitalId: hospital._id, patientId: patient._id,
-            familyMemberId: member?._id ?? null,
-            patientSnapshot: {
-              name: member?.name || patient.name,
-              phone: patient.phone,
-              gender: member?.gender || patient.gender,
-              // Frozen at booking: the roster shows the age they were seen at,
-              // and a dob edited later must not rewrite an old consultation.
-              age: ageFrom(member?.dob || patient.dob),
-              complaint: complaint?.trim() || '',
-              // Frozen with the rest of the snapshot: what was declared for
-              // THIS visit, not whatever the profile says years later.
-              conditions: Array.isArray(conditions)
-                ? conditions.map((c) => String(c).trim()).filter(Boolean).slice(0, 20)
-                : (member?.conditions ?? []),
-            },
-            visitType, source: TOKEN_SOURCE.APP, status: TOKEN_STATUS.WAITING,
-            statusHistory: [{ from: null, to: TOKEN_STATUS.WAITING, at: new Date(), byUserId: actor?.id }],
-            isPaid: false, bookedBy: actor?.id ?? patient._id,
-          }],
+          [{ ...fields, tokenNumber, date, shift: shift ?? undefined }],
           { session, ordered: true },
         );
         created = token.toObject();
       }, { writeConcern: { w: 'majority' } });
 
       emitTokenCreated(created);
+      // eslint-disable-next-line no-await-in-loop
       await emitQueueSnapshot(doctor._id, date);
-      // Platform billing, deliberately AFTER the transaction has committed and
-      // deliberately unawaited-on-failure: a clinic's commercial terms must
-      // never be the reason a patient cannot get a token.
-      recordTokenChargeSafe({ hospital, token: created });
       return created;
     } catch (err) {
       if (isDuplicateKey(err) && attempt < 4) {
@@ -321,21 +337,95 @@ export const bookToken = async ({ doctorId, patientId, familyMemberId, visitType
  * snapshot derives both from the live waiting list, and emitting it is what
  * pushes the corrected timer to every screen.
  */
+const CANCEL_ROLE = {
+  [ROLES.PATIENT]: 'PATIENT',
+  [ROLES.RECEPTIONIST]: 'DESK',
+  [ROLES.DOCTOR]: 'DOCTOR',
+  [ROLES.EXEC_ADMIN]: 'ADMIN',
+  [ROLES.SUPER_ADMIN]: 'ADMIN',
+};
+
+/**
+ * Cancel a token. Money is never touched: a paid token stays paid, and the
+ * patient is told before they confirm that cancelling does not refund.
+ *
+ * A patient may cancel their own booking while it is waiting, with or without
+ * saying why. Clinic staff must give a reason — the patient and the doctor
+ * both see it — and may also cancel a skipped token (a no-show who is not
+ * coming back). Any cancellation the doctor did not make themselves is
+ * flagged to that doctor until they acknowledge it.
+ */
 export const cancelToken = async ({ tokenId, actor, reason }) => {
   const token = await OPDToken.findById(tokenId);
   if (!token) throw notFound('Token not found');
   assertTokenScope(actor, token);
-  if (token.status !== TOKEN_STATUS.WAITING) {
+
+  const byRole = CANCEL_ROLE[actor.role] ?? 'ADMIN';
+  const isPatient = byRole === 'PATIENT';
+  const cancellable = isPatient ? [TOKEN_STATUS.WAITING] : [TOKEN_STATUS.WAITING, TOKEN_STATUS.SKIPPED];
+  if (!cancellable.includes(token.status)) {
     throw conflict(
       token.status === TOKEN_STATUS.IN_CHAMBER
         ? 'This patient is already with the doctor and cannot be cancelled'
-        : 'Only a waiting token can be cancelled',
+        : token.status === TOKEN_STATUS.CANCELLED
+          ? 'This token is already cancelled'
+          : isPatient ? 'Only a waiting token can be cancelled' : 'Only a waiting or skipped token can be cancelled',
     );
   }
+  const why = String(reason || '').trim();
+  if (!isPatient && why.length < 5) {
+    throw validationError([{ path: 'reason', message: 'Give a reason for cancelling — the patient and the doctor will see it' }]);
+  }
+
   const updated = await transition(token, TOKEN_STATUS.CANCELLED, {
     actor,
-    reason: reason?.trim() || 'Cancelled by patient',
+    reason: why || 'Cancelled by patient',
   });
+  // The doctor is flagged unless they cancelled it themselves.
+  const flagDoctor = byRole !== 'DOCTOR';
+  await OPDToken.updateOne(
+    { _id: token._id },
+    { $set: { cancelledByRole: byRole, 'doctorAlert.pending': flagDoctor, 'doctorAlert.acknowledgedAt': null } },
+  );
+  // Cancelling a doctor-booked follow-up is the patient saying they will not
+  // come, so the doctor's follow-up list must read "declined", not "pending".
+  if ([FOLLOWUP_STATUS.PENDING, FOLLOWUP_STATUS.CONFIRMED].includes(token.followUp?.status)) {
+    await OPDToken.updateOne(
+      { _id: token._id },
+      { $set: { 'followUp.status': FOLLOWUP_STATUS.DECLINED, 'followUp.respondedAt': new Date() } },
+    );
+  }
+
+  const by = await User.findById(actor.id).select('name').lean();
+  if (flagDoctor) emitTokenCancelled({ token: { ...updated, cancelReason: why || 'Cancelled by patient' }, byRole, byName: by?.name });
+  writeAuditLog({
+    actorId: actor.id,
+    actorRole: actor.role,
+    action: AUDIT_ACTIONS.TOKEN_CANCELLED,
+    entityType: 'OPDToken',
+    entityId: token._id,
+    hospitalId: token.hospitalId,
+    // Whether money was kept is the question an audit of a cancellation asks.
+    after: { reason: why || 'Cancelled by patient', byRole, wasPaid: Boolean(token.isPaid), refunded: false },
+  });
+
   await emitQueueSnapshot(token.doctorId, token.date);
-  return updated;
+  return { ...updated, cancelledByRole: byRole };
+};
+
+/** The doctor has seen a cancellation flagged to them. */
+export const acknowledgeCancellation = async ({ tokenId, actor }) => {
+  const token = await OPDToken.findById(tokenId);
+  if (!token) throw notFound('Token not found');
+  if (actor.role === ROLES.DOCTOR && String(token.doctorId) !== String(actor.doctorId)) {
+    throw notFound('Token not found');
+  }
+  assertTokenScope(actor, token);
+  if (token.status !== TOKEN_STATUS.CANCELLED) throw conflict('This token is not cancelled');
+  await OPDToken.updateOne(
+    { _id: token._id },
+    { $set: { 'doctorAlert.pending': false, 'doctorAlert.acknowledgedAt': new Date() } },
+  );
+  await emitQueueSnapshot(token.doctorId, token.date);
+  return { tokenId: String(token._id), acknowledged: true };
 };

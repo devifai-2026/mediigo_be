@@ -21,6 +21,9 @@ const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: intFrom(4000),
   BASE_URL: z.string().default('http://localhost:4000'),
+  // The patient-facing web app, for links in WhatsApp messages. Optional:
+  // without it messages say "in the Mediigo app" instead of linking.
+  APP_URL: z.string().default(''),
   CORS_ORIGINS: csv,
   LOG_LEVEL: z.string().default('debug'),
 
