@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
-import { Transaction, OPDToken, Hospital } from '../../models/index.js';
+import { Transaction, OPDToken, Hospital, Doctor } from '../../models/index.js';
+import { expenseTotal, resolveRange } from './desk.js';
 import { TOKEN_STATUS } from '../../config/constants.js';
-import { clinicDate } from '../../lib/dates.js';
 
 /**
  * Revenue and patient analytics over a period.
@@ -22,18 +22,16 @@ const PERIODS = {
   year: { days: 365, bucket: 'month' },
 };
 
-const shiftDays = (isoDate, delta) => {
-  const d = new Date(`${isoDate}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + delta);
-  return d.toISOString().slice(0, 10);
-};
-
-export const revenueAnalytics = async ({ hospitalId, period = 'week' }) => {
-  const spec = PERIODS[period] || PERIODS.week;
+export const revenueAnalytics = async ({ hospitalId, period = 'week', doctorId = null, date, from: fromQ, to: toQ }) => {
   const hospital = await Hospital.findById(hospitalId).lean();
-  const today = clinicDate(hospital?.timezone);
-  const from = shiftDays(today, -(spec.days - 1));
+  // A calendar pick (one day or a range) wins over the named period.
+  const { from, to, days } = resolveRange(hospital, { period: PERIODS[period] ? period : 'week', date, from: fromQ, to: toQ });
+  // Day columns stay readable up to about two months; past that, months.
+  const spec = { bucket: days > 62 ? 'month' : 'day' };
   const hid = new mongoose.Types.ObjectId(String(hospitalId));
+  // Narrowing to one doctor applies to every figure below, so the tabs and the
+  // per-doctor cards can never disagree about whose numbers they are.
+  const scope = { hospitalId: hid, ...(doctorId ? { doctorId: new mongoose.Types.ObjectId(String(doctorId)) } : {}) };
 
   // $substrBytes over the 'YYYY-MM-DD' string rather than a date cast: the
   // field is already clinic-local, and converting it to a Date here would
@@ -42,9 +40,9 @@ export const revenueAnalytics = async ({ hospitalId, period = 'week' }) => {
     ? { $substrBytes: ['$date', 0, 7] }
     : '$date';
 
-  const [money, patients, byVisit, byPayment] = await Promise.all([
+  const [money, patients, byVisit, byPayment, byDoctorMoney, byDoctorPatients, petty, doctors] = await Promise.all([
     Transaction.aggregate([
-      { $match: { hospitalId: hid, date: { $gte: from, $lte: today }, status: 'PAID' } },
+      { $match: { ...scope, date: { $gte: from, $lte: to }, status: 'PAID' } },
       {
         $group: {
           _id: groupKey,
@@ -58,7 +56,7 @@ export const revenueAnalytics = async ({ hospitalId, period = 'week' }) => {
       { $sort: { _id: 1 } },
     ]),
     OPDToken.aggregate([
-      { $match: { hospitalId: hid, date: { $gte: from, $lte: today } } },
+      { $match: { ...scope, date: { $gte: from, $lte: to } } },
       {
         $group: {
           _id: groupKey,
@@ -73,11 +71,11 @@ export const revenueAnalytics = async ({ hospitalId, period = 'week' }) => {
       { $sort: { _id: 1 } },
     ]),
     Transaction.aggregate([
-      { $match: { hospitalId: hid, date: { $gte: from, $lte: today }, status: 'PAID' } },
+      { $match: { ...scope, date: { $gte: from, $lte: to }, status: 'PAID' } },
       { $group: { _id: '$visitType', total: { $sum: '$totalFee' }, count: { $sum: 1 } } },
     ]),
     Transaction.aggregate([
-      { $match: { hospitalId: hid, date: { $gte: from, $lte: today }, status: 'PAID' } },
+      { $match: { ...scope, date: { $gte: from, $lte: to }, status: 'PAID' } },
       {
         $group: {
           _id: null,
@@ -89,11 +87,45 @@ export const revenueAnalytics = async ({ hospitalId, period = 'week' }) => {
         },
       },
     ]),
+    Transaction.aggregate([
+      { $match: { ...scope, date: { $gte: from, $lte: to }, status: 'PAID' } },
+      { $group: { _id: '$doctorId', total: { $sum: '$totalFee' }, count: { $sum: 1 } } },
+    ]),
+    OPDToken.aggregate([
+      { $match: { ...scope, date: { $gte: from, $lte: to } } },
+      {
+        $group: {
+          _id: '$doctorId',
+          booked: { $sum: 1 },
+          completed: { $sum: { $cond: [{ $eq: ['$status', TOKEN_STATUS.COMPLETED] }, 1, 0] } },
+        },
+      },
+    ]),
+    // Petty cash is the desk drawer's, not a doctor's, so a per-doctor view has none.
+    doctorId ? { total: 0, count: 0 } : expenseTotal(hid, from, to),
+    Doctor.find({ hospitalId: hid, ...(doctorId ? { _id: doctorId } : {}) }).select('name specialty chamberNumber photo.url isActive').lean(),
   ]);
 
   const uniquePatients = await OPDToken.distinct('patientId', {
-    hospitalId: hid, date: { $gte: from, $lte: today },
+    ...scope, date: { $gte: from, $lte: to },
   });
+
+  const moneyByDoc = new Map(byDoctorMoney.map((r) => [String(r._id), r]));
+  const patientsByDoc = new Map(byDoctorPatients.map((r) => [String(r._id), r]));
+  const byDoctor = doctors
+    .filter((d) => d.isActive !== false || moneyByDoc.has(String(d._id)))
+    .map((d) => ({
+      doctorId: String(d._id),
+      name: d.name,
+      specialty: d.specialty || '',
+      chamberNumber: d.chamberNumber || '',
+      photoUrl: d.photo?.url || null,
+      revenue: moneyByDoc.get(String(d._id))?.total ?? 0,
+      receipts: moneyByDoc.get(String(d._id))?.count ?? 0,
+      booked: patientsByDoc.get(String(d._id))?.booked ?? 0,
+      completed: patientsByDoc.get(String(d._id))?.completed ?? 0,
+    }))
+    .sort((a, b) => b.revenue - a.revenue || b.booked - a.booked);
 
   const pTotals = patients.reduce(
     (a, r) => ({
@@ -110,7 +142,11 @@ export const revenueAnalytics = async ({ hospitalId, period = 'week' }) => {
   return {
     period,
     from,
-    to: today,
+    to,
+    days,
+    doctorId: doctorId ? String(doctorId) : null,
+    byDoctor,
+    pettyCash: petty,
     bucket: spec.bucket,
     accounts: {
       series: money.map((r) => ({ label: r._id, total: r.total, cash: r.cash, upi: r.upi, card: r.card, count: r.count })),

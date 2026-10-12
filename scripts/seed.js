@@ -235,6 +235,9 @@ const run = async () => {
     }
     // Counters must match what we just inserted, or the next real walk-in collides.
     await Counter.findOneAndUpdate({ _id: `token:${d1._id}:${today}` }, { $set: { seq: queue.length } }, { upsert: true });
+    // Bookings number per sitting now; without this the first patient to book
+    // Dr. Sandeep today would collide with seeded token #1.
+    await Counter.findOneAndUpdate({ _id: `token:${d1._id}:${today}:MORNING` }, { $max: { seq: queue.length } }, { upsert: true });
     await Counter.findOneAndUpdate({ _id: `receipt:${h1._id}:${fy}` }, { $set: { seq: receiptSeq } }, { upsert: true });
     await Doctor.updateOne({ _id: d1._id }, { $set: { 'session.lastCalledToken': 3 } });
   }

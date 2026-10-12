@@ -19,6 +19,9 @@ export { Ticket, TICKET_STATUS, TICKET_PRIORITY, TICKET_CATEGORY } from './Ticke
 export { BillingSettings, getBillingSettings } from './BillingSettings.js';
 export { BillingCharge } from './BillingCharge.js';
 export { Review } from './Review.js';
+export { Prescription } from './Prescription.js';
+export { PettyExpense } from './PettyExpense.js';
+export { ClinicLead, LEAD_STAGE, VISIT_OUTCOME } from './ClinicLead.js';
 
 import { User } from './User.js';
 import { District } from './District.js';
@@ -39,11 +42,15 @@ import { Ticket } from './Ticket.js';
 import { BillingSettings } from './BillingSettings.js';
 import { BillingCharge } from './BillingCharge.js';
 import { Review } from './Review.js';
+import { Prescription } from './Prescription.js';
+import { PettyExpense } from './PettyExpense.js';
+import { ClinicLead } from './ClinicLead.js';
 
 export const allModels = [
   User, District, Hospital, Doctor, Specialty, QRStandee, OPDToken, Transaction,
   PatientPolicy, OnboardingSubmission, AuditLog, OtpVerification,
   WaSettings, Counter, DistanceCache, Ticket, BillingSettings, BillingCharge, Review,
+  Prescription, PettyExpense, ClinicLead,
 ];
 
 export const syncAllIndexes = async () => {

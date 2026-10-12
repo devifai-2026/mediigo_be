@@ -32,6 +32,20 @@ const hospitalSchema = new mongoose.Schema(
 
     contactPhone: String,
     contactEmail: String,
+
+    /**
+     * Photos of the premises, shown to patients on each doctor's profile so
+     * they recognise the building and know what to expect inside. Ordered as
+     * the clinic wants them shown; `kind` splits the gallery into tabs.
+     */
+    photos: {
+      type: [{
+        url: { type: String, required: true },
+        kind: { type: String, enum: ['INSIDE', 'OUTSIDE'], required: true },
+        caption: { type: String, default: '', maxlength: 120 },
+      }],
+      default: [],
+    },
     subscriptionPlan: { type: String, enum: ['FREE', 'BASIC', 'PRO', 'ENTERPRISE'], default: 'FREE' },
     subscriptionValidTill: Date,
 

@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import { CONSULT_OUTCOME, TOKEN_STATUS, VISIT_TYPE, TOKEN_SOURCE, SHIFT } from '../config/constants.js';
+import { CONSULT_OUTCOME, TOKEN_STATUS, VISIT_TYPE, TOKEN_SOURCE, SHIFT, FOLLOWUP_STATUS } from '../config/constants.js';
 
 const opdTokenSchema = new mongoose.Schema(
   {
@@ -57,6 +57,17 @@ const opdTokenSchema = new mongoose.Schema(
     cancelledAt: { type: Date, default: null },
     cancelledBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     cancelReason: { type: String, default: '' },
+    // Who cancelled, by role: PATIENT, DESK (receptionist), DOCTOR or ADMIN.
+    cancelledByRole: { type: String, default: null },
+    /**
+     * A cancellation the doctor did not make themselves is flagged to them:
+     * a patient they expected has been taken off their list by someone else.
+     * It stays flagged until the doctor acknowledges it.
+     */
+    doctorAlert: {
+      pending: { type: Boolean, default: false },
+      acknowledgedAt: { type: Date, default: null },
+    },
     // Append-only. This is what settles "I was skipped unfairly" disputes.
     statusHistory: [
       {
@@ -85,6 +96,27 @@ const opdTokenSchema = new mongoose.Schema(
       tokenNumber: Number,
     },
 
+    /**
+     * Set on a token the DOCTOR booked as a follow-up, rather than one the
+     * patient booked. The token holds a real place in that sitting from the
+     * moment it is created; this tracks whether the patient has agreed to
+     * come, so a slot nobody is coming for can be freed for someone else.
+     */
+    followUp: {
+      status: { type: String, enum: [null, ...Object.values(FOLLOWUP_STATUS)], default: null },
+      sourceTokenId: { type: mongoose.Schema.Types.ObjectId, ref: 'OPDToken', default: null },
+      note: { type: String, default: '' },
+      scheduledBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+      scheduledAt: { type: Date, default: null },
+      // Answer wanted by this time. Past it, the clinic may release the slot.
+      respondBy: { type: Date, default: null },
+      respondedAt: { type: Date, default: null },
+      releasedAt: { type: Date, default: null },
+      releasedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    },
+    // On the consultation that ordered it: the follow-up token it created.
+    followUpTokenId: { type: mongoose.Schema.Types.ObjectId, ref: 'OPDToken', default: null },
+
     transactionId: { type: mongoose.Schema.Types.ObjectId, ref: 'Transaction', default: null },
     isPaid: { type: Boolean, default: false },
     bookedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
@@ -100,5 +132,7 @@ opdTokenSchema.index({ doctorId: 1, date: 1, status: 1 });
 opdTokenSchema.index({ patientId: 1, createdAt: -1 });
 opdTokenSchema.index({ hospitalId: 1, date: 1 });
 opdTokenSchema.index({ date: 1 });
+// The doctor's follow-up list. Sparse on status so ordinary tokens stay out.
+opdTokenSchema.index({ doctorId: 1, 'followUp.status': 1, date: 1 });
 
 export const OPDToken = mongoose.model('OPDToken', opdTokenSchema);

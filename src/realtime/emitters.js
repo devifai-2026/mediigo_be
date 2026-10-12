@@ -63,6 +63,25 @@ export const emitTokenStatusChanged = ({ token, from, to, reason }) => {
 };
 
 /**
+ * Flag a cancellation to the doctor whose list it came off, and to the desk.
+ * Names are fine here: both rooms are staff-only.
+ */
+export const emitTokenCancelled = ({ token, byRole, byName }) => {
+  const payload = {
+    tokenId: String(token._id),
+    tokenNumber: token.tokenNumber,
+    doctorId: String(token.doctorId),
+    patientName: token.patientSnapshot?.name ?? '',
+    reason: token.cancelReason || '',
+    byRole,
+    byName: byName || '',
+    at: new Date().toISOString(),
+  };
+  safeEmit(chamberRoom(token.doctorId), SOCKET_EVENTS.TOKEN_CANCELLED, payload);
+  safeEmit(hospitalRoom(token.hospitalId), SOCKET_EVENTS.TOKEN_CANCELLED, payload);
+};
+
+/**
  * CALL_NEXT_TOKEN is state (the board re-renders). EXECUTE_AUDIO_ANNOUNCEMENT is
  * a command (the speaker speaks). They stay separate so a recall can re-announce
  * without re-transitioning state, and a silent display can ignore the audio.

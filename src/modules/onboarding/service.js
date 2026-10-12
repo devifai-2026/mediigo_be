@@ -1,19 +1,32 @@
-import { OnboardingSubmission, Hospital } from '../../models/index.js';
+import { OnboardingSubmission, Hospital, ClinicLead, LEAD_STAGE } from '../../models/index.js';
 import { geocodeAddress } from '../../lib/providers/google-maps.js';
 import { notFound, conflict, validationError } from '../../lib/errors.js';
 import { assertSubmissionScope, scopeFilter } from '../../middleware/rbac.js';
 import { emitSubmissionStatus } from '../../realtime/emitters.js';
+import { assertLeadOnboardable } from './leads.js';
 import { SUBMISSION_STATUS, ROLES } from '../../config/constants.js';
 
-export const create = async ({ body, actor }) =>
-  OnboardingSubmission.create({
+export const create = async ({ body, actor }) => {
+  // Onboarding a clinic from the agent's follow-up list: the lead must be
+  // theirs, and it must not already have been submitted.
+  let lead = null;
+  if (body.leadId) {
+    lead = await ClinicLead.findById(body.leadId);
+    if (!lead || String(lead.agentId) !== String(actor.id)) throw notFound('Lead not found');
+    // A rejected clinic may be resubmitted; anything else is still in review or done.
+    await assertLeadOnboardable(lead);
+  }
+  const sub = await OnboardingSubmission.create({
     kind: body.kind,
     agentId: actor.id,
     districtId: body.districtId || actor.districtId,
     status: SUBMISSION_STATUS.DRAFT,
     payload: body.payload,
     documents: body.documents || [],
+    leadId: lead?._id ?? null,
   });
+  return sub;
+};
 
 export const update = async ({ id, body, actor }) => {
   const sub = await OnboardingSubmission.findById(id);
@@ -66,7 +79,19 @@ export const submit = async ({ id, actor }) => {
 
   const from = sub.status;
   sub.status = SUBMISSION_STATUS.SUBMITTED;
+  sub.submittedAt = new Date();
   await sub.save();
+
+  // The prospect it came from is now in the approval pipeline.
+  if (sub.leadId) {
+    await ClinicLead.updateOne(
+      { _id: sub.leadId },
+      {
+        $set: { stage: LEAD_STAGE.SUBMITTED, submissionId: sub._id, submittedAt: sub.submittedAt, nextVisitAt: null },
+        $push: { visits: { at: sub.submittedAt, outcome: 'ONBOARDED', note: 'Submitted for district approval' } },
+      },
+    );
+  }
   emitSubmissionStatus({ submission: sub, from, to: SUBMISSION_STATUS.SUBMITTED });
   return sub.toObject();
 };
@@ -79,7 +104,10 @@ export const list = async ({ actor, status }) => {
   if (actor.role === ROLES.FIELD_AGENT) filter.agentId = actor.id;
   else if (scope.districtId) filter.districtId = scope.districtId;
   if (status) filter.status = status;
-  return OnboardingSubmission.find(filter).sort({ createdAt: -1 }).lean();
+  return OnboardingSubmission.find(filter)
+    .populate('reviewedBy', 'name')
+    .sort({ createdAt: -1 })
+    .lean();
 };
 
 export const getById = async ({ id, actor }) => {

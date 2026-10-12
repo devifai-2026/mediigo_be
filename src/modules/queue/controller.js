@@ -70,6 +70,11 @@ export const cancel = async (req, res) => {
   res.json({ ok: true, data });
 };
 
+export const cancelAck = async (req, res) => {
+  const data = await service.acknowledgeCancellation({ tokenId: req.params.tokenId, actor: req.user });
+  res.json({ ok: true, data });
+};
+
 // ---- Reschedule after a doctor goes off ----
 
 export const rescheduleChoices = async (req, res) => {

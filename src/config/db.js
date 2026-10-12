@@ -2,6 +2,8 @@ import mongoose from 'mongoose';
 import { env, isProduction } from './env.js';
 import { logger } from '../lib/logger.js';
 
+
+
 export const connectDb = async () => {
   mongoose.set('strictQuery', true);
   // Index creation is owned by the seed/deploy step in production. Letting every

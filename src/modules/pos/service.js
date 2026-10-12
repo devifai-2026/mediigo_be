@@ -15,6 +15,7 @@ import {
 } from '../../config/constants.js';
 import { emitQueueSnapshot, emitTokenCreated, emitTransactionRecorded } from '../../realtime/emitters.js';
 import { recordTokenChargeSafe } from '../../services/billing.js';
+import { expenseTotal } from './desk.js';
 
 const MAX_ALLOC_RETRIES = 5;
 
@@ -332,13 +333,15 @@ export const payForToken = async ({ tokenId, body, actor, ip, userAgent }) => {
  * Day close. Revenue counts COMPLETED consultations only, and there is no petty
  * cash anywhere — reconciliation is gross expected vs actual deposits.
  */
-export const dayClose = async ({ hospitalId, date, actor }) => {
+export const dayClose = async ({ hospitalId, date, actor, doctorId = null }) => {
   const hospital = await Hospital.findById(hospitalId).lean();
   assertHospitalScope(actor, hospital);
   const day = date || clinicDate(hospital.timezone);
+  // A doctor closes their own takings; the drawer (and its petty cash) is the desk's.
+  const docMatch = doctorId ? { doctorId: new mongoose.Types.ObjectId(String(doctorId)) } : {};
 
   const rows = await Transaction.aggregate([
-    { $match: { hospitalId: hospital._id, date: day, status: 'PAID' } },
+    { $match: { hospitalId: hospital._id, date: day, status: 'PAID', ...docMatch } },
     { $lookup: { from: 'opdtokens', localField: 'tokenId', foreignField: '_id', as: 'token' } },
     { $unwind: '$token' },
     // Only completed consultations count as earned revenue. Billing a patient
@@ -357,6 +360,7 @@ export const dayClose = async ({ hospitalId, date, actor }) => {
   ]);
 
   const collectors = await User.find({ _id: { $in: rows.map((r) => r._id) } }).select('name').lean();
+  const petty = doctorId ? { total: 0, count: 0 } : await expenseTotal(hospital._id, day, day);
   const nameOf = new Map(collectors.map((c) => [String(c._id), c.name]));
 
   const totals = rows.reduce(
@@ -370,7 +374,7 @@ export const dayClose = async ({ hospitalId, date, actor }) => {
   // Everything billed today, including not-yet-completed, shown separately so
   // the desk can see what is still outstanding without it inflating revenue.
   const billedAll = await Transaction.aggregate([
-    { $match: { hospitalId: hospital._id, date: day, status: 'PAID' } },
+    { $match: { hospitalId: hospital._id, date: day, status: 'PAID', ...docMatch } },
     { $group: { _id: null, total: { $sum: '$totalFee' }, count: { $sum: 1 } } },
   ]);
 
@@ -385,5 +389,9 @@ export const dayClose = async ({ hospitalId, date, actor }) => {
       cash: r.cash, upi: r.upi, card: r.card, total: r.total, count: r.count,
     })),
     billedIncludingIncomplete: { total: billedAll[0]?.total ?? 0, count: billedAll[0]?.count ?? 0 },
+    // Cash paid out of the drawer today. The drawer should hold the cash taken
+    // MINUS this, which is what the desk counts against at close.
+    pettyCash: petty,
+    cashInHand: totals.cash - petty.total,
   };
 };

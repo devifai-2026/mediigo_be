@@ -40,6 +40,15 @@ export const tzOffsetMinutes = (timezone, at = new Date()) => {
   return Math.round((asUTC - Math.floor(at.getTime() / 1000) * 1000) / 60000);
 };
 
+// The instant a clinic wall-clock time happens: '2026-10-20' + '10:00' in
+// Asia/Kolkata -> the matching UTC Date.
+export const clinicDateTime = (dateStr, hhmm, timezone = env.DEFAULT_TIMEZONE) => {
+  const [h, m] = String(hhmm || '00:00').split(':').map(Number);
+  const asIfUtc = Date.parse(`${dateStr}T00:00:00Z`) + ((h || 0) * 60 + (m || 0)) * 60_000;
+  const offset = tzOffsetMinutes(timezone, new Date(asIfUtc));
+  return new Date(asIfUtc - offset * 60_000);
+};
+
 export const addMinutes = (date, minutes) => new Date(date.getTime() + minutes * 60_000);
 
 export const ageFrom = (dob) => {

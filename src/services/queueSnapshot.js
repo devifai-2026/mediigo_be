@@ -1,5 +1,6 @@
 import { OPDToken } from '../models/OPDToken.js';
 import { Doctor } from '../models/Doctor.js';
+import { Transaction } from '../models/Transaction.js';
 import { TOKEN_STATUS, VISIT_TYPE } from '../config/constants.js';
 import { maskName } from '../lib/logger.js';
 
@@ -15,13 +16,36 @@ import { maskName } from '../lib/logger.js';
  */
 export const buildQueueSnapshot = async (doctorId, date, { includePii = false } = {}) => {
   const [doctor, tokens] = await Promise.all([
-    Doctor.findById(doctorId).select('name chamberNumber avgConsultMinutes session hospitalId').lean(),
-    OPDToken.find({ doctorId, date })
-      .select('tokenNumber status patientSnapshot patientId calledAt completedAt skipReason visitType shift startTime endTime outcome')
+    Doctor.findById(doctorId).select('name specialty chamberNumber avgConsultMinutes session hospitalId').lean(),
+    // A cancelled token, or one waiting for its patient to pick a new slot,
+    // is not in today's queue: counting it inflated "Total Registered" and put
+    // a patient who will not come on the roster and the waiting-room board.
+    OPDToken.find({ doctorId, date, status: { $nin: [TOKEN_STATUS.CANCELLED, TOKEN_STATUS.RESCHEDULE_NEEDED] } })
+      .select('tokenNumber status patientSnapshot patientId calledAt enteredChamberAt completedAt skipReason visitType shift startTime endTime outcome followUp.status followUp.respondBy followUpTokenId')
       .sort({ tokenNumber: 1 })
       .lean(),
   ]);
   if (!doctor) return null;
+
+  // Today's cancellations, for clinic staff only: who took a patient off the
+  // list and why. A waiting-room board never sees these.
+  // Fetched for every snapshot, because they still count towards `version`;
+  // their details are only sent to staff.
+  const cancelledQuery = OPDToken.find({ doctorId, date, status: TOKEN_STATUS.CANCELLED })
+    .select('tokenNumber patientSnapshot.name cancelReason cancelledAt cancelledBy cancelledByRole doctorAlert isPaid visitType')
+    .sort({ cancelledAt: -1 });
+  if (includePii) cancelledQuery.populate('cancelledBy', 'name');
+  const cancellations = await cancelledQuery.lean();
+
+  // What each patient paid, for the desk's roster. Staff only, and fetched
+  // only then: a public display has no business knowing anyone's fee.
+  const paidByToken = new Map();
+  if (includePii && tokens.length) {
+    const txns = await Transaction.find({ tokenId: { $in: tokens.map((t) => t._id) }, status: 'PAID' })
+      .select('tokenId totalFee tender')
+      .lean();
+    for (const x of txns) paidByToken.set(String(x.tokenId), x);
+  }
 
   const byStatus = (s) => tokens.filter((t) => t.status === s);
   const waiting = byStatus(TOKEN_STATUS.WAITING);
@@ -40,6 +64,7 @@ export const buildQueueSnapshot = async (doctorId, date, { includePii = false } 
   return {
     doctorId: String(doctorId),
     doctorName: doctor.name,
+    specialty: doctor.specialty || '',
     hospitalId: String(doctor.hospitalId),
     chamberNumber: doctor.chamberNumber || '',
     date,
@@ -91,12 +116,59 @@ export const buildQueueSnapshot = async (doctorId, date, { includePii = false } 
       // Staff only: the reason for the visit is clinical detail and has no
       // business on a public waiting-room display.
       ...(includePii
-        ? { patientId: String(t.patientId), phone: t.patientSnapshot?.phone, complaint: t.patientSnapshot?.complaint ?? '' }
+        ? {
+          patientId: String(t.patientId),
+          phone: t.patientSnapshot?.phone,
+          complaint: t.patientSnapshot?.complaint ?? '',
+          ...paymentOf(paidByToken.get(String(t._id))),
+        }
         : {}),
+      // When the patient walked into the chamber, so the desk can see how long
+      // the current consultation has been running.
+      enteredChamberAt: t.enteredChamberAt ?? t.calledAt ?? null,
+      completedAt: t.completedAt ?? null,
+      outcome: t.outcome ?? null,
       skipReason: t.skipReason ?? null,
+      // A doctor-booked follow-up and whether the patient has said they will
+      // come. Unconfirmed ones are the slots the roster lets staff release.
+      followUpStatus: t.followUp?.status ?? null,
+      followUpRespondBy: t.followUp?.respondBy ?? null,
+      // On a consultation: it already has a follow-up booked.
+      hasFollowUp: Boolean(t.followUpTokenId),
     })),
     // Monotonic within a doctor-day: the number of state transitions so far.
-    version: tokens.reduce((acc, t) => acc + 1 + (t.status === TOKEN_STATUS.WAITING ? 0 : 1), 0),
+    cancellations: (includePii ? cancellations : []).map((c) => ({
+      tokenId: String(c._id),
+      tokenNumber: c.tokenNumber,
+      name: c.patientSnapshot?.name ?? '',
+      reason: c.cancelReason || '',
+      byRole: c.cancelledByRole || 'PATIENT',
+      byName: c.cancelledBy?.name ?? '',
+      at: c.cancelledAt,
+      wasPaid: Boolean(c.isPaid),
+      visitType: c.visitType ?? 'fresh',
+      needsAck: Boolean(c.doctorAlert?.pending),
+      acknowledgedAt: c.doctorAlert?.acknowledgedAt ?? null,
+    })),
+    // Cancelled tokens are off the list but still count, or cancelling a
+    // waiting token would LOWER the version and every client would discard
+    // the update as stale. waiting (1) → cancelled (2) → acknowledged (3).
+    version: tokens.reduce((acc, t) => acc + 1 + (t.status === TOKEN_STATUS.WAITING ? 0 : 1), 0)
+      + cancellations.reduce((acc, c) => acc + 2 + (c.doctorAlert?.acknowledgedAt ? 1 : 0), 0),
     updatedAt: new Date().toISOString(),
+  };
+};
+
+/**
+ * Fee and how it was paid, for one token. A token booked in the app may not
+ * have been paid at the desk yet, which the roster shows as unpaid rather than
+ * as a zero fee.
+ */
+const paymentOf = (txn) => {
+  if (!txn) return { fee: null, paymentMode: null };
+  const used = ['cash', 'upi', 'card'].filter((k) => (txn.tender?.[k] ?? 0) > 0);
+  return {
+    fee: txn.totalFee,
+    paymentMode: used.length > 1 ? 'SPLIT' : (used[0]?.toUpperCase() ?? 'FREE'),
   };
 };

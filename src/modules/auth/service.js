@@ -2,6 +2,7 @@ import argon2 from 'argon2';
 import { User } from '../../models/User.js';
 import { OtpVerification } from '../../models/OtpVerification.js';
 import { Hospital } from '../../models/Hospital.js';
+import { District } from '../../models/District.js';
 import { generateOtp, hashOtp, otpExpiryDate } from '../../lib/otp.js';
 import { getMessagingProvider, getWaSettings } from '../../lib/providers/index.js';
 import { last10Digits, isValidIndianMobile } from '../../lib/phone.js';
@@ -224,6 +225,11 @@ export const getMe = async (userId) => {
    * Deliberately informational only. Nothing downstream gates on these fields:
    * an expired trial starts billing, it never closes the portal.
    */
+  // District staff see their district in the header.
+  if (user.districtId) {
+    const district = await District.findById(user.districtId, { name: 1 }).lean();
+    if (district) user.district = { id: String(district._id), name: district.name };
+  }
   if (user.hospitalId) {
     const hospital = await Hospital.findById(user.hospitalId, { name: 1, trial: 1 }).lean();
     if (hospital) {

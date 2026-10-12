@@ -17,6 +17,7 @@ export const dayClose = async (req, res) => {
     hospitalId: req.user.hospitalId,
     date: req.query.date,
     actor: req.user,
+    doctorId: req.user.role === 'DOCTOR' ? req.user.doctorId : (req.query.doctorId || null),
   });
   res.json({ ok: true, data });
 };
