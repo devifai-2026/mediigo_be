@@ -6,7 +6,7 @@ import { validate } from '../../middleware/validate.js';
 import { requireAuth, optionalAuth, requireActiveUser } from '../../middleware/auth.js';
 import { requireRole } from '../../middleware/rbac.js';
 import { ROLES } from '../../config/constants.js';
-import { nearbySchema, suggestSchema, feesSchema, profileSchema, scheduleSchema, markOffSchema } from './schema.js';
+import { nearbySchema, slotsSchema, suggestSchema, feesSchema, profileSchema, scheduleSchema, markOffSchema } from './schema.js';
 
 export const doctorRoutes = Router();
 
@@ -31,6 +31,9 @@ doctorRoutes.get('/suggest', validate(suggestSchema), asyncHandler(controller.su
 
 // Cities with clinics, so a patient can browse a city instead of sharing GPS.
 doctorRoutes.get('/cities', asyncHandler(controller.cities));
+
+// Type-ahead for the location box: cities, localities and pincodes to search from.
+doctorRoutes.get('/places', validate(suggestSchema), asyncHandler(controller.places));
 
 doctorRoutes.get(
   '/',
@@ -73,6 +76,7 @@ doctorRoutes.delete(
 // ---- Scheduling ----
 // Public: a patient picking a date needs this before they sign in.
 doctorRoutes.get('/:id/availability', optionalAuth, asyncHandler(controller.availability));
+doctorRoutes.get('/:id/slots', optionalAuth, validate(slotsSchema), asyncHandler(controller.slots));
 
 doctorRoutes.put(
   '/:id/schedule',

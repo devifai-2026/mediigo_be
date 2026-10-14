@@ -8,6 +8,7 @@ import { logger } from './lib/logger.js';
 import { requestId } from './middleware/requestId.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 import { mountRoutes } from './routes.js';
+import { LOCAL_UPLOAD_ROOT } from './services/storage.js';
 
 export const createApp = () => {
   const app = express();
@@ -25,6 +26,15 @@ export const createApp = () => {
 
   app.use(requestId);
   app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
+
+  // Photos stored by the local storage driver. storage.js hands out URLs under
+  // /uploads, but nothing served them, so every locally stored doctor and
+  // patient photo was a broken image. Every file here was decoded, resized
+  // and re-encoded as JPEG on upload, so serving it as-is is safe. Names are
+  // random per upload, which makes them safe to cache for a long time.
+  app.use('/uploads', express.static(LOCAL_UPLOAD_ROOT, {
+    index: false, dotfiles: 'deny', fallthrough: false, immutable: true, maxAge: '30d',
+  }));
   app.use(
     cors({
       // Every origin is allowed while this is a development/demo deployment,

@@ -13,6 +13,7 @@ import { Doctor } from '../models/Doctor.js';
 import { OPDToken } from '../models/OPDToken.js';
 import { clinicDate } from '../lib/dates.js';
 import { BOOKING_HORIZON_DAYS, SHIFT, TOKEN_STATUS } from '../config/constants.js';
+import { env } from '../config/env.js';
 
 /** YYYY-MM-DD `days` after `from`, staying in string space to dodge TZ drift. */
 export const addDays = (dateStr, days) => {
@@ -221,4 +222,103 @@ export const availabilityForDoctorId = async (doctorId, timezone) => {
   const doctor = await Doctor.findById(doctorId).select('schedule scheduleOverrides').lean();
   if (!doctor) return null;
   return doctorAvailability({ doctor: { ...doctor, _id: doctorId }, timezone });
+};
+
+/** Minutes since midnight in `timezone` right now. */
+const minutesNow = (timezone, now = new Date()) => toMinutes(new Intl.DateTimeFormat('en-GB', {
+  timeZone: timezone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+}).format(now));
+
+/**
+ * The first sitting in the booking horizon a patient could still take a token
+ * for, or null. Synchronous: the caller supplies booked counts keyed
+ * "doctorId|date|shift", so a list of doctors costs one aggregate, not one each.
+ */
+export const nextAvailableSitting = ({ doctor, timezone, booked = new Map(), now = new Date() }) => {
+  const dates = bookableDates(timezone);
+  const nowMins = minutesNow(timezone, now);
+  for (const date of dates) {
+    for (const s of shiftsOn(doctor, date)) {
+      if (date === dates[0] && toMinutes(s.endTime) <= nowMins) continue;
+      const taken = booked.get(`${doctor._id}|${date}|${s.shift}`) ?? 0;
+      if (s.maxTokens != null && taken >= s.maxTokens) continue;
+      return {
+        date,
+        shift: s.shift,
+        startTime: s.startTime,
+        endTime: s.endTime,
+        isToday: date === dates[0],
+        // Already under way today: "now", rather than a start time in the past.
+        inProgress: date === dates[0] && toMinutes(s.startTime) <= nowMins,
+      };
+    }
+  }
+  return null;
+};
+
+/** 'HH:mm' for minutes since midnight. */
+const fromMinutes = (mins) => `${String(Math.floor(mins / 60) % 24).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
+
+/**
+ * Every token number in one sitting, with the time it is expected to be
+ * seen, so a patient booking online can choose a slot instead of taking
+ * whatever number comes next.
+ *
+ * The times come from the doctor's own average consultation length, which
+ * they set on their desk profile: token n is expected at
+ * start + (n - 1) × average. Capacity is the sitting's cap when it has one,
+ * otherwise as many consultations as fit between start and end.
+ *
+ * A number is `taken` once any token holds it, cancelled ones included — the
+ * unique index keeps a cancelled number, so offering it would only fail.
+ * Today, a number is `past` once the queue has moved beyond it or its slot
+ * has gone by; offering a 9:10 slot at 11:00 helps nobody.
+ */
+export const sittingSlots = async ({ doctor, timezone, date, shift, now = new Date() }) => {
+  const sitting = shiftsOn(doctor, date).find((s) => s.shift === shift);
+  if (!sitting) return null;
+
+  const avg = doctor.avgConsultMinutes || env.MINUTES_PER_CONSULT;
+  const start = toMinutes(sitting.startTime);
+  const end = toMinutes(sitting.endTime);
+
+  const tokens = await OPDToken.find({ doctorId: doctor._id, date, shift })
+    .select('tokenNumber status')
+    .lean();
+  const taken = new Set(tokens.map((t) => t.tokenNumber));
+  const maxTaken = tokens.reduce((m, t) => Math.max(m, t.tokenNumber), 0);
+  // The queue has reached the highest number already called or seen.
+  const reached = tokens
+    .filter((t) => t.status !== TOKEN_STATUS.WAITING && t.status !== TOKEN_STATUS.CANCELLED)
+    .reduce((m, t) => Math.max(m, t.tokenNumber), 0);
+
+  const fits = Math.max(1, Math.floor((end - start) / avg));
+  // Without a cap the sitting never refuses a booking, so there is always one
+  // more number after the last one taken.
+  const capacity = sitting.maxTokens ?? Math.max(fits, maxTaken + 1);
+
+  const today = clinicDate(timezone, now);
+  const nowMins = date === today ? minutesNow(timezone, now) : -1;
+
+  const slots = Array.from({ length: capacity }, (_, i) => {
+    const number = i + 1;
+    const at = start + i * avg;
+    let status = 'free';
+    if (taken.has(number)) status = 'taken';
+    else if (date === today && (number <= reached || at + avg <= nowMins)) status = 'past';
+    return { number, time: fromMinutes(at), status };
+  });
+
+  return {
+    date,
+    shift: sitting.shift,
+    startTime: sitting.startTime,
+    endTime: sitting.endTime,
+    avgConsultMinutes: avg,
+    capacity,
+    capped: sitting.maxTokens != null,
+    slots,
+    // What the patient gets without choosing: the first free number.
+    suggested: slots.find((s) => s.status === 'free')?.number ?? null,
+  };
 };

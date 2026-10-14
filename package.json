@@ -8,7 +8,9 @@
     "node": ">=20"
   },
   "scripts": {
+    "predev": "bash scripts/ensure-mongo.sh",
     "dev": "nodemon src/index.js",
+    "db:start": "bash scripts/ensure-mongo.sh",
     "start": "node src/index.js",
     "seed": "node scripts/seed.js",
     "seed:force": "node scripts/seed.js --force",

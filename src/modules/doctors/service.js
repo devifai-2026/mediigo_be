@@ -1,5 +1,5 @@
-import { Doctor, Hospital, Specialty } from '../../models/index.js';
-import { findNearbyDoctors, suggestSearch, listCities } from '../../services/nearbySearch.js';
+import { Doctor, Hospital, Specialty, toSlug } from '../../models/index.js';
+import { findNearbyDoctors, suggestSearch, listCities, searchPlaces } from '../../services/nearbySearch.js';
 import { assertUploadable, processAvatar, putObject, deleteObject } from '../../services/storage.js';
 import { notFound } from '../../lib/errors.js';
 import { assertDoctorScope } from '../../middleware/rbac.js';
@@ -11,6 +11,8 @@ export const nearby = (params) => findNearbyDoctors(params);
 export const suggest = (params) => suggestSearch(params);
 
 export const cities = () => listCities();
+
+export const places = (params) => searchPlaces(params);
 
 /**
  * Specialties a patient can actually filter by.
@@ -33,7 +35,10 @@ export const getById = async (doctorId) => {
   // A patient must not be able to deep-link into a clinic that is no longer on
   // the network.
   if (hospital?.networkState !== NETWORK_STATE.ACTIVE) throw notFound('Doctor not found');
-  return { ...doctor, hospital };
+  // What the specialty is, in plain words, for the profile header. The doctor
+  // stores the display name; the slug is the stable key both share.
+  const spec = await Specialty.findOne({ slug: toSlug(doctor.specialty) }).select('description').lean();
+  return { ...doctor, hospital, specialtyDescription: spec?.description || '' };
 };
 
 export const list = async (actor) => {

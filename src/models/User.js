@@ -10,7 +10,15 @@ const familyMemberSchema = new mongoose.Schema(
     // The account holder's own conditions. Family members carry their own.
     conditions: { type: [String], default: [] },
     aadhaarHash: { type: String, default: null },
+    // Their own number, last 10 digits. Required when added for anyone but a
+    // child, so this person can be tied to their own Mediigo account.
     phone: String,
+    /**
+     * The member's own Mediigo account, when one exists with this phone.
+     * Set when the member is added, or later when that number first signs in.
+     * Server-set only — a client must never be able to claim someone's account.
+     */
+    linkedUserId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     /**
      * Long-standing conditions a doctor should know before the consultation —
      * diabetes, hypertension, asthma and the like. Per family member, because
@@ -38,12 +46,23 @@ const userSchema = new mongoose.Schema(
     gender: { type: String, enum: ['M', 'F', 'O'] },
     familyMembers: { type: [familyMemberSchema], default: [] },
 
+    // The patient's own profile photo. objectPath is the storage key, kept so a
+    // replacement deletes the old object instead of orphaning it.
+    photo: {
+      url: { type: String, default: null },
+      objectPath: { type: String, default: null },
+      updatedAt: { type: Date, default: null },
+    },
+
     // Staff only. Patients are OTP-only and never receive one.
     passwordHash: { type: String, default: null, select: false },
     // Per-user override of the role-level 2FA policy set by Super Admin.
     twoFactorEnabled: { type: Boolean, default: false },
 
     isActive: { type: Boolean, default: true },
+    // Set when a patient deletes their own account. The record stays as an
+    // inactive tombstone with its personal details wiped; see patients/account.js.
+    deletedAt: { type: Date, default: null },
 
     // Scope anchors — the entire RBAC scope system reads these, and they are
     // copied into the JWT so scope checks cost no DB reads.
@@ -95,6 +114,8 @@ userSchema.index(
 userSchema.index({ role: 1, hospitalId: 1 });
 userSchema.index({ role: 1, districtId: 1 });
 userSchema.index({ 'familyMembers.aadhaarHash': 1 }, { sparse: true });
+// Signup looks up family entries that carry the new account's number.
+userSchema.index({ 'familyMembers.phone': 1 }, { sparse: true });
 userSchema.index({ lastKnownLocation: '2dsphere' }, { sparse: true });
 
 userSchema.methods.toSafeJSON = function toSafeJSON() {
