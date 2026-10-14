@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 import { Doctor, Hospital, OPDToken, Transaction, User } from '../../models/index.js';
 import { nextSequence, tokenCounterId } from '../../lib/counters.js';
 import { clinicDate, endOfClinicDay, addMinutes, jitterDelay, sleep, ageFrom } from '../../lib/dates.js';
-import { resolveBookableShift } from '../../services/availability.js';
+import { resolveBookableShift, sittingSlots } from '../../services/availability.js';
 import { conflict, notFound, validationError, isDuplicateKey } from '../../lib/errors.js';
 import { assertDoctorScope, assertTokenScope, assertHospitalScope } from '../../middleware/rbac.js';
 import { buildQueueSnapshot } from '../../services/queueSnapshot.js';
@@ -206,7 +206,7 @@ export const setBookingOpen = async ({ doctorId, isOpen, actor }) => {
  * Patient app booking — unpaid, so no Transaction. Uses the same counter
  * allocation and retry loop as the POS.
  */
-export const bookToken = async ({ doctorId, patientId, familyMemberId, visitType = 'fresh', date: wantedDate, shift: wantedShift, complaint, conditions, actor }) => {
+export const bookToken = async ({ doctorId, patientId, familyMemberId, visitType = 'fresh', date: wantedDate, shift: wantedShift, tokenNumber: wantedNumber, complaint, conditions, actor }) => {
   const { doctor, hospital } = await loadDoctorAndHospital(doctorId);
   if (hospital.networkState !== NETWORK_STATE.ACTIVE) {
     throw conflict('This clinic is not accepting bookings', RESPONSE_CODES.HOSPITAL_NOT_ACTIVE);
@@ -236,6 +236,20 @@ export const bookToken = async ({ doctorId, patientId, familyMemberId, visitType
   } else if (!doctor.session?.isBookingOpen) {
     throw conflict('Bookings are closed for this doctor', RESPONSE_CODES.BOOKING_CLOSED);
   }
+  // A chosen token number must be one the slot grid offered: inside the
+  // sitting, not taken, and not already behind the queue. The insert below
+  // still guards the race where two patients pick it at the same moment.
+  let fixedNumber = null;
+  if (wantedNumber != null) {
+    if (!shift) throw conflict('This doctor takes tokens in arrival order only', RESPONSE_CODES.BOOKING_CLOSED);
+    const grid = await sittingSlots({ doctor, timezone: hospital.timezone, date, shift });
+    const slot = grid?.slots.find((x) => x.number === wantedNumber);
+    if (!slot || slot.status !== 'free') {
+      throw conflict(`Token ${wantedNumber} is no longer available — please pick another`, RESPONSE_CODES.BOOKING_CLOSED);
+    }
+    fixedNumber = wantedNumber;
+  }
+
   const patient = await User.findById(patientId).lean();
   if (!patient) throw notFound('Patient not found');
 
@@ -244,7 +258,7 @@ export const bookToken = async ({ doctorId, patientId, familyMemberId, visitType
     : null;
 
   const created = await allocateToken({
-    doctor, hospital, date, shift,
+    doctor, hospital, date, shift, fixedNumber,
     fields: {
       ...shiftTimes,
       doctorId: doctor._id, hospitalId: hospital._id, patientId: patient._id,
@@ -281,18 +295,30 @@ export const bookToken = async ({ doctorId, patientId, familyMemberId, visitType
  * on a number collision. Shared by patient booking and doctor-booked
  * follow-ups, so both go through the same counter and the same unique index.
  */
-export const allocateToken = async ({ doctor, hospital, date, shift, fields }) => {
+export const allocateToken = async ({ doctor, hospital, date, shift, fields, fixedNumber = null }) => {
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const session = await mongoose.startSession();
     try {
       let created;
       // eslint-disable-next-line no-await-in-loop
       await session.withTransaction(async () => {
-        const tokenNumber = await nextSequence(tokenCounterId(doctor._id, date, shift), session, {
+        const counter = () => nextSequence(tokenCounterId(doctor._id, date, shift), session, {
           // Anchored to the token's own date, so a counter for a future sitting
           // is not swept away before that day arrives.
           expiresAt: endOfClinicDay(date, hospital.timezone),
         });
+        let tokenNumber = fixedNumber;
+        if (tokenNumber == null) {
+          // Patients booking online may have picked numbers ahead of the
+          // counter. Step past those here; leaving it to the duplicate-key
+          // retry would exhaust the retries after five picked numbers in a row.
+          tokenNumber = await counter();
+          // eslint-disable-next-line no-await-in-loop
+          while (await OPDToken.exists({ doctorId: doctor._id, date, shift: shift ?? null, tokenNumber }).session(session)) {
+            // eslint-disable-next-line no-await-in-loop
+            tokenNumber = await counter();
+          }
+        }
         const [token] = await OPDToken.create(
           [{ ...fields, tokenNumber, date, shift: shift ?? undefined }],
           { session, ordered: true },
@@ -305,6 +331,11 @@ export const allocateToken = async ({ doctor, hospital, date, shift, fields }) =
       await emitQueueSnapshot(doctor._id, date);
       return created;
     } catch (err) {
+      // A picked number that someone else got first is the patient's call to
+      // make again, not something to retry into a different number silently.
+      if (isDuplicateKey(err) && fixedNumber != null) {
+        throw conflict(`Token ${fixedNumber} was just taken — please pick another`, RESPONSE_CODES.BOOKING_CLOSED);
+      }
       if (isDuplicateKey(err) && attempt < 4) {
         // eslint-disable-next-line no-await-in-loop
         await sleep(jitterDelay(attempt));

@@ -1,7 +1,7 @@
 import { OPDToken } from '../models/OPDToken.js';
 import { Doctor } from '../models/Doctor.js';
 import { Transaction } from '../models/Transaction.js';
-import { TOKEN_STATUS, VISIT_TYPE } from '../config/constants.js';
+import { TOKEN_STATUS, TOKEN_SOURCE, VISIT_TYPE } from '../config/constants.js';
 import { maskName } from '../lib/logger.js';
 
 /**
@@ -21,7 +21,7 @@ export const buildQueueSnapshot = async (doctorId, date, { includePii = false } 
     // is not in today's queue: counting it inflated "Total Registered" and put
     // a patient who will not come on the roster and the waiting-room board.
     OPDToken.find({ doctorId, date, status: { $nin: [TOKEN_STATUS.CANCELLED, TOKEN_STATUS.RESCHEDULE_NEEDED] } })
-      .select('tokenNumber status patientSnapshot patientId calledAt enteredChamberAt completedAt skipReason visitType shift startTime endTime outcome followUp.status followUp.respondBy followUpTokenId')
+      .select('tokenNumber status source patientSnapshot patientId calledAt enteredChamberAt completedAt skipReason visitType shift startTime endTime outcome followUp.status followUp.respondBy followUpTokenId')
       .sort({ tokenNumber: 1 })
       .lean(),
   ]);
@@ -104,6 +104,9 @@ export const buildQueueSnapshot = async (doctorId, date, { includePii = false } 
       // both need to see an emergency without opening the row.
       visitType: t.visitType ?? 'fresh',
       isEmergency: t.visitType === VISIT_TYPE.EMERGENCY,
+      // Online = the patient booked it themselves (app or QR standee);
+      // otherwise the desk booked it. Either way they are seen in the clinic.
+      bookedOnline: t.source === TOKEN_SOURCE.APP || t.source === TOKEN_SOURCE.QR_SCAN,
       // Public displays get a masked name; staff clients get the real one.
       name: includePii ? t.patientSnapshot?.name ?? '' : maskName(t.patientSnapshot?.name),
       // Age and gender are clinical context, not identity — a waiting-room

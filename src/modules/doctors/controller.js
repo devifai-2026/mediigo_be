@@ -3,7 +3,7 @@ import { Doctor, Hospital } from '../../models/index.js';
 import { notFound } from '../../lib/errors.js';
 import { writeAuditLog } from '../../lib/auditLog.js';
 import { assertDoctorScope } from '../../middleware/rbac.js';
-import { doctorAvailability } from '../../services/availability.js';
+import { doctorAvailability, sittingSlots } from '../../services/availability.js';
 import { markDoctorOff, clearDoctorOff } from '../../services/absence.js';
 
 export const setPhoto = async (req, res) => {
@@ -22,6 +22,10 @@ export const suggest = async (req, res) => {
 
 export const cities = async (_req, res) => {
   res.json({ ok: true, data: await service.cities() });
+};
+
+export const places = async (req, res) => {
+  res.json({ ok: true, data: await service.places({ q: req.query.q, limit: req.query.limit }) });
 };
 
 export const specialties = async (_req, res) => {
@@ -61,6 +65,18 @@ export const availability = async (req, res) => {
   const hospital = await Hospital.findById(doctor.hospitalId).select('timezone name').lean();
   const days = await doctorAvailability({ doctor: { ...doctor, _id: doctor._id }, timezone: hospital?.timezone });
   res.json({ ok: true, data: { doctorId: String(doctor._id), doctorName: doctor.name, clinicName: hospital?.name ?? '', days } });
+};
+
+/** Token numbers and their expected times for one sitting. Public, like availability. */
+export const slots = async (req, res) => {
+  const doctor = await Doctor.findById(req.params.id)
+    .select('schedule scheduleOverrides hospitalId avgConsultMinutes')
+    .lean();
+  if (!doctor) throw notFound('Doctor not found');
+  const hospital = await Hospital.findById(doctor.hospitalId).select('timezone').lean();
+  const data = await sittingSlots({ doctor, timezone: hospital?.timezone, date: req.query.date, shift: req.query.shift });
+  if (!data) throw notFound('The doctor is not sitting then');
+  res.json({ ok: true, data });
 };
 
 export const updateSchedule = async (req, res) => {

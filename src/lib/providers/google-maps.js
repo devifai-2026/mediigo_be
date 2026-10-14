@@ -53,6 +53,40 @@ export const geocodeAddress = async ({ line1, line2, city, state, pincode }) => 
 };
 
 /**
+ * Free text ("Salt Lake", "Baner Pune") -> a few candidate places, for the
+ * patient's location search. Unlike geocodeAddress this returns several rows
+ * and a short label, because a patient picks one from a list.
+ */
+export const geocodePlaces = async (text, limit = 3) => {
+  if (!mapsEnabled()) return [];
+  const url = `${GEOCODE_URL}?address=${encodeURIComponent(text)}&region=${env.GOOGLE_GEOCODE_REGION}&components=country:IN&key=${realKey()}`;
+
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
+    const data = await res.json();
+    if (data.status === 'OVER_QUERY_LIMIT' || data.status === 'REQUEST_DENIED') {
+      tripBreaker(data.status);
+      return [];
+    }
+    if (data.status !== 'OK') return [];
+    return data.results.slice(0, limit).map((r) => {
+      const part = (type) => r.address_components?.find((c) => c.types.includes(type))?.long_name ?? '';
+      const label = r.address_components?.[0]?.long_name || r.formatted_address;
+      return {
+        label,
+        sublabel: r.formatted_address.replace(`${label}, `, ''),
+        city: part('locality') || part('administrative_area_level_2') || label,
+        lat: r.geometry.location.lat,
+        lng: r.geometry.location.lng,
+      };
+    });
+  } catch (err) {
+    logger.warn({ err: err.message }, 'place search geocode failed');
+    return [];
+  }
+};
+
+/**
  * Coordinates -> a readable address.
  *
  * Used when a patient shares their location: storing bare numbers means their

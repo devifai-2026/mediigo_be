@@ -1,9 +1,10 @@
-import { Hospital, Doctor, OPDToken } from '../models/index.js';
-import { distanceMatrix } from '../lib/providers/google-maps.js';
+import { Hospital, Doctor, OPDToken, District } from '../models/index.js';
+import { distanceMatrix, geocodePlaces } from '../lib/providers/google-maps.js';
 import { round1 } from '../lib/geo.js';
 import { clinicDate } from '../lib/dates.js';
 import { env } from '../config/env.js';
 import { NETWORK_STATE, TOKEN_STATUS } from '../config/constants.js';
+import { bookableDates, nextAvailableSitting } from './availability.js';
 
 const escapeRegex = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -89,6 +90,7 @@ export const findNearbyDoctors = async ({ lng, lat, radiusKm, specialty, search,
             $project: {
               name: 1, specialty: 1, qualifications: 1, fees: 1, chamberNumber: 1,
               session: 1, experienceYears: 1, avgConsultMinutes: 1, languages: 1, photo: 1,
+              rating: 1, schedule: 1, scheduleOverrides: 1,
             },
           },
         ],
@@ -98,7 +100,7 @@ export const findNearbyDoctors = async ({ lng, lat, radiusKm, specialty, search,
     { $match: { 'doctors.0': { $exists: true } } },
     // clinicMatches is deliberately absent: it is a pipeline helper, not part
     // of the response contract.
-    { $project: { name: 1, code: 1, type: 1, address: 1, location: 1, crowKm: 1, doctors: 1, subscriptionPlan: 1, contactPhone: 1 } },
+    { $project: { name: 1, code: 1, type: 1, address: 1, location: 1, crowKm: 1, doctors: 1, subscriptionPlan: 1, contactPhone: 1, timezone: 1 } },
   ]);
 
   if (!hospitals.length) {
@@ -143,6 +145,22 @@ export const findNearbyDoctors = async ({ lng, lat, radiusKm, specialty, search,
     },
   ]);
   const depthBy = new Map(depth.map((d) => [String(d._id), d]));
+
+  // Booked counts across the booking horizon, so each card can say when the
+  // doctor next has room. Also one batched query; capped sittings need it.
+  const tzOf = (h) => h.timezone || env.DEFAULT_TIMEZONE;
+  const horizon = [...new Set(hospitals.flatMap((h) => bookableDates(tzOf(h))))];
+  const horizonCounts = await OPDToken.aggregate([
+    {
+      $match: {
+        doctorId: { $in: doctorIds },
+        date: { $in: horizon },
+        status: { $in: [TOKEN_STATUS.WAITING, TOKEN_STATUS.IN_CHAMBER, TOKEN_STATUS.COMPLETED] },
+      },
+    },
+    { $group: { _id: { doctorId: '$doctorId', date: '$date', shift: '$shift' }, n: { $sum: 1 } } },
+  ]);
+  const booked = new Map(horizonCounts.map((c) => [`${c._id.doctorId}|${c._id.date}|${c._id.shift}`, c.n]));
 
   // Road distance, deduped to distinct hospitals.
   const dm = await distanceMatrix({
@@ -191,6 +209,8 @@ export const findNearbyDoctors = async ({ lng, lat, radiusKm, specialty, search,
         languages: d.languages,
         fees: d.fees,
         chamberNumber: d.chamberNumber,
+        rating: { average: d.rating?.average ?? 0, count: d.rating?.count ?? 0 },
+        nextAvailable: nextAvailableSitting({ doctor: d, timezone: tzOf(h), booked }),
         session: {
           isBookingOpen: Boolean(d.session?.isBookingOpen),
           isOnBreak: onBreak,
@@ -353,4 +373,93 @@ export const listCities = async () => {
       lat: Number((r.lat / r.clinics).toFixed(6)),
     }))
     .sort((a, b) => b.clinics - a.clinics || a.city.localeCompare(b.city));
+};
+
+/**
+ * Places a patient can search FROM: what the location box offers as they type.
+ *
+ * The network's own data answers first, and needs no API key: cities that have
+ * clinics, districts we operate in, and the localities and pincodes in clinic
+ * addresses ("Salt Lake", "700064"). Each comes with coordinates to measure
+ * from. Google only fills in when that turns up little, so "Behala" still
+ * resolves even with no clinic there yet, and a typo does not cost a call.
+ */
+export const searchPlaces = async ({ q, limit = 8 }) => {
+  const term = String(q || '').trim();
+  if (term.length < 2) return [];
+  const re = new RegExp(escapeRegex(term), 'i');
+  const lower = term.toLowerCase();
+
+  const [cityRows, districts, hospitals] = await Promise.all([
+    listCities(),
+    District.find({ name: re }).select('name state centroid').lean(),
+    Hospital.find({
+      networkState: NETWORK_STATE.ACTIVE,
+      $or: [{ 'address.line1': re }, { 'address.line2': re }, { 'address.pincode': re }],
+    }).select('address location').lean(),
+  ]);
+
+  const rows = [];
+  const seen = new Set();
+  const add = (row) => {
+    // A city is one place however many sources name it (clinics, district).
+    const key = (row.kind === 'city' ? `city|${row.label}` : `${row.label}|${row.sublabel}`).toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    rows.push(row);
+  };
+
+  for (const c of cityRows) {
+    if (!re.test(c.city)) continue;
+    add({
+      kind: 'city', label: c.city, city: c.city, lat: c.lat, lng: c.lng,
+      sublabel: `${c.clinics} ${c.clinics === 1 ? 'clinic' : 'clinics'}`,
+    });
+  }
+  for (const d of districts) {
+    const [lng, lat] = d.centroid?.coordinates ?? [];
+    if (lat == null) continue;
+    add({ kind: 'city', label: d.name, city: d.name, sublabel: d.state, lat, lng });
+  }
+
+  // A locality is one comma-separated part of the street address: "DD-12,
+  // Sector 1, Salt Lake" offers "Salt Lake", not the whole line. A leading
+  // house number is dropped ("45A Gariahat Road" -> "Gariahat Road"), and a
+  // part left with no words at all ("DD-12", "AA-II") is not a place.
+  const localities = new Map();
+  for (const h of hospitals) {
+    const [lng, lat] = h.location?.coordinates ?? [];
+    if (lat == null) continue;
+    const city = (h.address.city || '').split(',').pop().trim();
+    const parts = [h.address.line1, h.address.line2]
+      .filter(Boolean)
+      .flatMap((s) => s.split(','))
+      .map((s) => s.trim().replace(/^\S*\d\S*\s+/, ''))
+      .filter((s) => re.test(s) && /[a-z]{2}/.test(s));
+    if (re.test(h.address.pincode || '')) parts.push(h.address.pincode);
+    for (const label of parts) {
+      const key = `${label}|${city}`.toLowerCase();
+      const row = localities.get(key) ?? { kind: 'locality', label, city, sublabel: city, lat: 0, lng: 0, n: 0 };
+      row.lat += lat; row.lng += lng; row.n += 1;
+      localities.set(key, row);
+    }
+  }
+  for (const { n, ...r } of localities.values()) {
+    add({ ...r, lat: Number((r.lat / n).toFixed(6)), lng: Number((r.lng / n).toFixed(6)) });
+  }
+
+  if (rows.length < 3 && term.length >= 3) {
+    for (const p of await geocodePlaces(term)) add({ kind: 'place', ...p });
+  }
+
+  // Same intent ranking as suggestSearch: a match at the start of the name or
+  // of a word beats one buried mid-word.
+  const rank = (r) => {
+    const label = r.label.toLowerCase();
+    if (label.startsWith(lower)) return 0;
+    if (label.split(/\s+/).some((w) => w.startsWith(lower))) return 1;
+    return 2;
+  };
+  rows.sort((a, b) => rank(a) - rank(b));
+  return rows.slice(0, limit);
 };

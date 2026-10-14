@@ -42,6 +42,8 @@ export const bookSchema = {
     // Omitted means today, which keeps every existing walk-in caller working.
     date: z.string().regex(DATE_RE, 'Expected YYYY-MM-DD').optional(),
     shift: z.enum(Object.values(SHIFT)).optional(),
+    // A specific token number from the slot grid. Omitted means the next free one.
+    tokenNumber: z.coerce.number().int().min(1).max(500).optional(),
     // Why they are coming in. Optional — a patient who does not want to say
     // must still be able to book — but it is what the doctor reads first.
     complaint: z.string().trim().max(300).optional(),

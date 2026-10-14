@@ -55,6 +55,7 @@ export const book = async (req, res) => {
     doctorId: req.body.doctorId,
     patientId: req.user.id,
     familyMemberId: req.body.familyMemberId,
+    tokenNumber: req.body.tokenNumber,
     visitType: req.body.visitType,
     date: req.body.date,
     shift: req.body.shift,

@@ -70,3 +70,10 @@ export const markOffSchema = {
     reason: z.string().max(300).optional(),
   }),
 };
+
+export const slotsSchema = {
+  query: z.object({
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD'),
+    shift: z.enum(Object.values(SHIFT)),
+  }),
+};
