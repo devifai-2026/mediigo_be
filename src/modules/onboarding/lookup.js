@@ -65,6 +65,8 @@ export const resolvePlace = async (placeId) => {
       line1: streetLine || area || data.result.name || '',
       line2: streetLine && area ? area : '',
       city: get('locality') || get('administrative_area_level_3') || get('administrative_area_level_2'),
+      // In India this is usually the district; it can be empty for metros.
+      district: get('administrative_area_level_3') || get('administrative_area_level_2'),
       state: get('administrative_area_level_1'),
       pincode: get('postal_code'),
       lat: loc?.lat ?? null,

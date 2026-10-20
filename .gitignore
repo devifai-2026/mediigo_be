@@ -7,3 +7,6 @@ node_modules/
 gcs-key.json
 *-key.json
 *.serviceaccount.json
+
+# Local file uploads (dev storage driver) — user content, never committed.
+uploads/

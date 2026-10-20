@@ -22,6 +22,7 @@ export { Review } from './Review.js';
 export { Prescription } from './Prescription.js';
 export { PettyExpense } from './PettyExpense.js';
 export { ClinicLead, LEAD_STAGE, VISIT_OUTCOME } from './ClinicLead.js';
+export { DoctorEnquiry, ENQUIRY_STATUS } from './DoctorEnquiry.js';
 
 import { User } from './User.js';
 import { District } from './District.js';
@@ -45,12 +46,13 @@ import { Review } from './Review.js';
 import { Prescription } from './Prescription.js';
 import { PettyExpense } from './PettyExpense.js';
 import { ClinicLead } from './ClinicLead.js';
+import { DoctorEnquiry } from './DoctorEnquiry.js';
 
 export const allModels = [
   User, District, Hospital, Doctor, Specialty, QRStandee, OPDToken, Transaction,
   PatientPolicy, OnboardingSubmission, AuditLog, OtpVerification,
   WaSettings, Counter, DistanceCache, Ticket, BillingSettings, BillingCharge, Review,
-  Prescription, PettyExpense, ClinicLead,
+  Prescription, PettyExpense, ClinicLead, DoctorEnquiry,
 ];
 
 export const syncAllIndexes = async () => {

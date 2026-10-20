@@ -6,6 +6,7 @@ const objectId = z.string().regex(/^[a-f0-9]{24}$/i, 'Invalid id');
 export const createSchema = {
   body: z.object({
     tokenId: objectId,
+    symptoms: z.string().trim().max(500).optional(),
     diagnosis: z.string().trim().min(1, 'Diagnosis is required').max(300),
     medicines: z.array(z.object({
       name: z.string().trim().min(1).max(120),
@@ -15,6 +16,14 @@ export const createSchema = {
     })).min(1, 'Add at least one medicine').max(30),
     advice: z.string().trim().max(1000).optional().default(''),
     reviewDate: z.string().regex(DATE_RE).optional().nullable(),
+    totalDue: z.coerce.number().min(0).max(1000000).optional().nullable(),
+  }),
+};
+
+export const lookupSchema = {
+  query: z.object({
+    phone: z.string().transform((v) => v.replace(/\D/g, '').slice(-10)).pipe(z.string().length(10, 'Enter a 10-digit mobile number')),
+    visits: z.coerce.number().int().min(1).max(20).optional(),
   }),
 };
 

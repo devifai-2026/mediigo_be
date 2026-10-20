@@ -22,12 +22,23 @@ const shiftDays = (isoDate, delta) => {
   return d.toISOString().slice(0, 10);
 };
 
+/**
+ * Which doctor a desk report covers. A doctor sees their own numbers — unless
+ * they are the clinic's admin doctor, who sees the whole clinic (or picks one
+ * doctor in it). Everyone else picks freely within their clinic.
+ */
+export const reportDoctorId = async (actor, requestedDoctorId = null) => {
+  if (actor.role !== ROLES.DOCTOR) return requestedDoctorId || null;
+  const me = await Doctor.findById(actor.doctorId).select('isClinicAdmin').lean();
+  return me?.isClinicAdmin ? (requestedDoctorId || null) : actor.doctorId;
+};
+
 export const scopeFor = async (actor, requested = {}) => {
   const hospitalId = actor.hospitalId || requested.hospitalId;
   const hospital = hospitalId ? await Hospital.findById(hospitalId).lean() : null;
   if (!hospital) throw notFound('Clinic not found');
   assertHospitalScope(actor, hospital);
-  const doctorId = actor.role === ROLES.DOCTOR ? actor.doctorId : (requested.doctorId || null);
+  const doctorId = await reportDoctorId(actor, requested.doctorId);
   return { hospital, doctorId };
 };
 
@@ -218,12 +229,13 @@ export const footfall = async ({ actor, query }) => {
     Doctor.find({ hospitalId: hospital._id }).select('name chamberNumber specialty').lean(),
   ]);
   const rx = await Prescription.find({ tokenId: { $in: tokens.map((t) => t._id) } })
-    .select('tokenId diagnosis medicines createdAt').sort({ createdAt: -1 }).lean();
+    .sort({ createdAt: -1 }).lean();
   const rxByToken = new Map();
   for (const r of rx) {
     const k = String(r.tokenId);
     if (!rxByToken.has(k)) rxByToken.set(k, []);
-    rxByToken.get(k).push({ id: String(r._id), diagnosis: r.diagnosis, medicines: r.medicines, at: r.createdAt });
+    // The whole record, so the register can show the prescription in place.
+    rxByToken.get(k).push({ ...r, id: String(r._id), at: r.createdAt });
   }
   const docById = new Map(doctors.map((d) => [String(d._id), d]));
 

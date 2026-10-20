@@ -112,3 +112,8 @@ export const clearOff = async (req, res) => {
   });
   res.json({ ok: true, data });
 };
+
+export const sitemap = async (req, res) => {
+  res.set('Cache-Control', 'public, max-age=3600');
+  res.json({ ok: true, data: await service.sitemapEntries() });
+};

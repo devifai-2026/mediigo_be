@@ -141,6 +141,11 @@ queueRoutes.post(
   requireAuth, asyncHandler(requireActiveUser), requireRole(ROLES.RECEPTIONIST, ROLES.DOCTOR, ROLES.SUPER_ADMIN),
   asyncHandler(controller.restore),
 );
+queueRoutes.post(
+  '/tokens/:tokenId/recall-completed',
+  requireAuth, asyncHandler(requireActiveUser), requireRole(...DESK),
+  asyncHandler(controller.recallCompleted),
+);
 
 /**
  * Public live status for one token.

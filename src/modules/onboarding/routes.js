@@ -1,5 +1,7 @@
 import { Router } from 'express';
+import multer from 'multer';
 import { z } from 'zod';
+import { assertUploadable, processPhoto, processAvatar, putObject } from '../../services/storage.js';
 import * as service from './service.js';
 import { suggestAddresses, resolvePlace, placesEnabled } from './lookup.js';
 import * as leads from './leads.js';
@@ -66,6 +68,25 @@ onboardingRoutes.get(
   '/address/resolve',
   asyncHandler(async (req, res) => {
     res.json({ ok: true, data: await resolvePlace(req.query.placeId) });
+  }),
+);
+
+// Photos taken during onboarding. The clinic does not exist yet, so they are
+// stored under the uploader and referenced from the submission's payload;
+// approval copies them onto the clinic. Memory storage for the same reason as
+// doctor photos: sharp re-encodes immediately, nothing raw touches disk.
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024, files: 1 } });
+onboardingRoutes.post(
+  '/uploads',
+  requireRole(ROLES.FIELD_AGENT, ROLES.EXEC_ADMIN, ROLES.SUPER_ADMIN),
+  upload.single('photo'),
+  asyncHandler(async (req, res) => {
+    assertUploadable(req.file);
+    // ?kind=avatar for a doctor's portrait (square crop, like the profile
+    // upload); anything else is a premises photo kept in its own shape.
+    const processed = req.query.kind === 'avatar' ? await processAvatar(req.file.buffer) : await processPhoto(req.file.buffer);
+    const stored = await putObject({ ...processed, prefix: `onboarding/${req.user.id}` });
+    res.status(201).json({ ok: true, data: stored });
   }),
 );
 

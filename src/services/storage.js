@@ -99,6 +99,26 @@ export const processAvatar = async (buffer, { size = AVATAR_SIZE } = {}) => {
   }
 };
 
+/**
+ * A premises photo: kept in its own shape (a clinic front is wide, not
+ * square), capped at 1600px on the long edge, re-encoded like an avatar so
+ * EXIF — including the camera's GPS — never reaches a public URL.
+ */
+export const processPhoto = async (buffer, { maxEdge = 1600 } = {}) => {
+  try {
+    const out = await sharp(buffer)
+      .rotate()
+      .resize(maxEdge, maxEdge, { fit: 'inside', withoutEnlargement: true })
+      .flatten({ background: '#ffffff' })
+      .jpeg({ quality: 82, progressive: true, mozjpeg: true })
+      .toBuffer();
+    return { buffer: out, contentType: 'image/jpeg', ext: 'jpg' };
+  } catch (err) {
+    logger.warn({ err: err.message }, 'photo processing failed');
+    throw validationError([{ path: 'photo', message: 'That file could not be read as an image' }]);
+  }
+};
+
 export const assertUploadable = (file) => {
   if (!file) throw validationError([{ path: 'photo', message: 'No file was uploaded' }]);
   if (file.size > MAX_UPLOAD_BYTES) {

@@ -35,9 +35,9 @@ const preflight = async (body, actor) => {
       RESPONSE_CODES.HOSPITAL_NOT_ACTIVE,
     );
   }
-  if (!doctor.session?.isBookingOpen) {
-    throw conflict('Bookings are closed for this doctor', RESPONSE_CODES.BOOKING_CLOSED);
-  }
+  // "Close booking" stops ONLINE bookings only. A patient standing at the desk
+  // is registered regardless — the doctor is in, and turning them away at the
+  // counter is the clinic's call, not a switch meant for the app.
   return { doctor, hospital };
 };
 
@@ -109,9 +109,7 @@ export const createWalkin = async ({ body, actor, ip, userAgent }) => {
           // (1) Re-read the doctor INSIDE the session: fees or the booking flag
           // could have changed between preflight and here.
           const live = await Doctor.findById(doctor._id).session(session).lean();
-          if (!live?.session?.isBookingOpen) {
-            throw conflict('Bookings are closed for this doctor', RESPONSE_CODES.BOOKING_CLOSED);
-          }
+          if (!live?.isActive) throw notFound('Doctor not found');
 
           const baseFee = live.fees[visitType];
           if (baseFee == null) throw validationError([{ path: 'visitType', message: 'Unknown visit type' }]);

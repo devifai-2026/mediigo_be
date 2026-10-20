@@ -9,7 +9,7 @@ import {
   walkinSchema, paySchema, dayCloseSchema, expenseSchema, voidExpenseSchema, deskQuerySchema,
 } from './schema.js';
 import { revenueAnalytics } from './analytics.js';
-import { logExpense, voidExpense, ledger, footfall } from './desk.js';
+import { logExpense, voidExpense, ledger, footfall, reportDoctorId } from './desk.js';
 import { validationError } from '../../lib/errors.js';
 
 export const posRoutes = Router();
@@ -43,7 +43,7 @@ posRoutes.get(
   asyncHandler(async (req, res) => {
     const hospitalId = req.user.hospitalId || req.query.hospitalId;
     if (!hospitalId) throw validationError('No clinic in scope — pass hospitalId');
-    const doctorId = req.user.role === ROLES.DOCTOR ? req.user.doctorId : (req.query.doctorId || null);
+    const doctorId = await reportDoctorId(req.user, req.query.doctorId);
     res.json({
       ok: true,
       data: await revenueAnalytics({

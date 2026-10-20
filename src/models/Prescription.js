@@ -33,12 +33,21 @@ const prescriptionSchema = new mongoose.Schema(
     patientSnapshot: { name: String, phone: String, age: Number, gender: String },
     doctorSnapshot: { name: String, specialty: String, chamberNumber: String, qualifications: [String] },
 
+    // What the patient came in with. Filled from the token's complaint and
+    // declared conditions when the doctor leaves it blank, so every record
+    // carries the presenting symptoms even if nobody typed them.
+    symptoms: { type: String, trim: true, maxlength: 500, default: '' },
     diagnosis: { type: String, required: true, trim: true, maxlength: 300 },
     medicines: { type: [medicineSchema], default: [] },
     advice: { type: String, trim: true, maxlength: 1000, default: '' },
     // Printed on the pad. A real follow-up booking goes through the queue's
     // follow-up flow, which holds a token; this is only the advised date.
     reviewDate: { type: String, default: null },
+    // Amount the patient still owes, as the doctor wrote it on the pad —
+    // tests, procedures, or a fee not yet paid. Printed only; the money itself
+    // is collected and receipted at the desk.
+    totalDue: { type: Number, default: null, min: 0 },
+    hospitalName: { type: String, default: '' },
 
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   },

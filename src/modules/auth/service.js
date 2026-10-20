@@ -3,6 +3,7 @@ import { User } from '../../models/User.js';
 import { OtpVerification } from '../../models/OtpVerification.js';
 import { Hospital } from '../../models/Hospital.js';
 import { District } from '../../models/District.js';
+import { Doctor } from '../../models/Doctor.js';
 import { OPDToken } from '../../models/OPDToken.js';
 import { generateOtp, hashOtp, otpExpiryDate } from '../../lib/otp.js';
 import { getMessagingProvider, getWaSettings } from '../../lib/providers/index.js';
@@ -255,6 +256,10 @@ export const getMe = async (userId) => {
    * an expired trial starts billing, it never closes the portal.
    */
   // District staff see their district in the header.
+  if (user.doctorId) {
+    const doc = await Doctor.findById(user.doctorId).select('isClinicAdmin').lean();
+    user.isClinicAdmin = Boolean(doc?.isClinicAdmin);
+  }
   if (user.districtId) {
     const district = await District.findById(user.districtId, { name: 1 }).lean();
     if (district) user.district = { id: String(district._id), name: district.name };

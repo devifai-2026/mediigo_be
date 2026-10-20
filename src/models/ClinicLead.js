@@ -53,6 +53,10 @@ const clinicLeadSchema = new mongoose.Schema(
       pincode: { type: String, trim: true, maxlength: 6, default: '' },
     },
     notes: { type: String, trim: true, maxlength: 1000, default: '' },
+    // AGENT: met on the ground. ENQUIRY: the clinic asked first, from the
+    // public landing page — call them back quickly.
+    source: { type: String, enum: ['AGENT', 'ENQUIRY'], default: 'AGENT' },
+    enquiryId: { type: mongoose.Schema.Types.ObjectId, ref: 'DoctorEnquiry', default: null },
 
     stage: { type: String, enum: Object.values(LEAD_STAGE), default: LEAD_STAGE.NEW },
     // The next meeting the agent has agreed with the clinic. Drives the list.
