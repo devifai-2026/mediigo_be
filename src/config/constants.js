@@ -2,6 +2,8 @@
 // instead of string literals is what keeps the RBAC scope map, the Mongoose
 // enums and the socket payloads from drifting apart.
 
+
+
 export const ROLES = {
   PATIENT: 'PATIENT',
   DOCTOR: 'DOCTOR',
