@@ -18,7 +18,8 @@
     "test:pos": "node scripts/test-pos-concurrency.js",
     "lint": "eslint src scripts",
     "seed:billing": "node scripts/seed-billing.js",
-    "seed:edge": "node scripts/seed-edge-cases.js"
+    "seed:edge": "node scripts/seed-edge-cases.js",
+    "seed:demo": "node scripts/seed-demo.js"
   },
   "dependencies": {
     "@google-cloud/storage": "^7.22.0",

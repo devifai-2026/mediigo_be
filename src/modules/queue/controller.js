@@ -31,6 +31,11 @@ export const restore = async (req, res) => {
   res.json({ ok: true, data });
 };
 
+export const recallCompleted = async (req, res) => {
+  const data = await service.recallCompleted({ tokenId: req.params.tokenId, actor: req.user });
+  res.json({ ok: true, data });
+};
+
 export const startBreak = async (req, res) => {
   const data = await service.startBreak({
     doctorId: req.params.doctorId, reason: req.body.reason, minutes: req.body.minutes, actor: req.user,

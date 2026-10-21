@@ -152,6 +152,51 @@ export const restoreSkipped = async ({ tokenId, actor }) =>
   setTokenStatus({ tokenId, to: TOKEN_STATUS.WAITING, reason: 'Recalled from skipped drawer', actor });
 
 /**
+ * Bring a completed patient back — they returned with reports, or were
+ * finished by mistake.
+ *
+ * Straight into the chamber when it is free, so the doctor can see them now.
+ * With someone already inside, they go back to the waiting list instead; their
+ * token number is lower than anyone still waiting, so they are called next.
+ * Today's tokens only: yesterday's queue is closed and its revenue counted.
+ */
+export const recallCompleted = async ({ tokenId, actor }) => {
+  const token = await OPDToken.findById(tokenId);
+  if (!token) throw notFound('Token not found');
+  assertTokenScope(actor, token);
+  if (token.status !== TOKEN_STATUS.COMPLETED) throw conflict('Only a completed token can be recalled');
+  const { doctor, hospital } = await loadDoctorAndHospital(token.doctorId);
+  assertDoctorScope(actor, doctor);
+  if (token.date !== clinicDate(hospital.timezone)) throw conflict('Only today’s patients can be recalled');
+
+  const busy = await OPDToken.exists({ doctorId: doctor._id, date: token.date, status: TOKEN_STATUS.IN_CHAMBER });
+  const to = busy ? TOKEN_STATUS.WAITING : TOKEN_STATUS.IN_CHAMBER;
+  const reason = 'Recalled after completion';
+
+  // Written directly rather than through the transition table: COMPLETED is
+  // terminal everywhere else, and this is the one deliberate way back.
+  const now = new Date();
+  await OPDToken.updateOne(
+    { _id: token._id },
+    {
+      $set: { status: to, completedAt: null, outcome: null, outcomeNotes: '', ...(to === TOKEN_STATUS.IN_CHAMBER ? { enteredChamberAt: now, calledAt: now } : {}) },
+      $push: { statusHistory: { from: TOKEN_STATUS.COMPLETED, to, at: now, byUserId: actor?.id, reason } },
+    },
+  );
+  const updated = await OPDToken.findById(token._id).lean();
+  emitTokenStatusChanged({ token: updated, from: TOKEN_STATUS.COMPLETED, to, reason });
+  if (to === TOKEN_STATUS.IN_CHAMBER) {
+    await Doctor.updateOne(
+      { _id: doctor._id },
+      { $set: { 'session.lastCalledToken': updated.tokenNumber, 'session.currentTokenId': updated._id } },
+    );
+    emitCallNext({ token: updated, doctor, recall: true });
+  }
+  await emitQueueSnapshot(doctor._id, token.date);
+  return { tokenNumber: updated.tokenNumber, status: to };
+};
+
+/**
  * Doctor break.
  *
  * breakUntil is computed SERVER-side from a duration, never accepted from the

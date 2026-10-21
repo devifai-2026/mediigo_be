@@ -245,6 +245,7 @@ const run = async () => {
           hospitalId: String(h._id),
           name, phone, specialty,
           councilRegNo: `MMC-${20000 + di * 3 + k}`,
+          registrationCouncil: 'Maharashtra Medical Council',
           qualifications: k === 0 ? ['MBBS', 'MD'] : ['MBBS', 'DNB'],
           experienceYears: 4 + ((di + k) % 20),
           fees: { fresh: 400 + ((di % 4) * 100), followup: 200 + ((di % 3) * 50), emergency: 900 + ((di % 3) * 100) },

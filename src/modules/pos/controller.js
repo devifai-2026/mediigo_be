@@ -1,4 +1,5 @@
 import * as service from './service.js';
+import { reportDoctorId } from './desk.js';
 
 const meta = (req) => ({ actor: req.user, ip: req.ip, userAgent: req.headers['user-agent'] });
 
@@ -17,7 +18,7 @@ export const dayClose = async (req, res) => {
     hospitalId: req.user.hospitalId,
     date: req.query.date,
     actor: req.user,
-    doctorId: req.user.role === 'DOCTOR' ? req.user.doctorId : (req.query.doctorId || null),
+    doctorId: await reportDoctorId(req.user, req.query.doctorId),
   });
   res.json({ ok: true, data });
 };

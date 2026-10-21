@@ -217,7 +217,8 @@ const run = async () => {
       payload: {
         hospitalId: String(hospitalIds[d.clinic]),
         name: d.name, phone: d.phone, specialty: d.specialty,
-        councilRegNo: d.reg, qualifications: d.quals, experienceYears: d.exp,
+        councilRegNo: d.reg, registrationCouncil: 'West Bengal Medical Council',
+        qualifications: d.quals, experienceYears: d.exp,
         fees: { fresh: d.fees[0], followup: d.fees[1], emergency: d.fees[2] },
       },
     });

@@ -41,6 +41,8 @@ doctorRoutes.get(
   requireRole(ROLES.RECEPTIONIST, ROLES.DOCTOR, ROLES.EXEC_ADMIN, ROLES.SUPER_ADMIN),
   asyncHandler(controller.list),
 );
+// Public: profile URLs for the website's sitemap.xml (served by the frontend host).
+doctorRoutes.get('/sitemap', asyncHandler(controller.sitemap));
 doctorRoutes.get('/:id', optionalAuth, asyncHandler(controller.getById));
 
 doctorRoutes.patch(
@@ -49,10 +51,13 @@ doctorRoutes.patch(
   requireRole(ROLES.DOCTOR, ROLES.RECEPTIONIST, ROLES.EXEC_ADMIN, ROLES.SUPER_ADMIN),
   validate(feesSchema), asyncHandler(controller.updateFees),
 );
+// The clinic's front desk keeps its doctors' profiles current, so
+// receptionists may edit too — assertDoctorScope confines them to their own
+// clinic, and the service keeps registration details locked.
 doctorRoutes.patch(
   '/:id',
   requireAuth, asyncHandler(requireActiveUser),
-  requireRole(ROLES.DOCTOR, ROLES.EXEC_ADMIN, ROLES.SUPER_ADMIN),
+  requireRole(ROLES.DOCTOR, ROLES.RECEPTIONIST, ROLES.EXEC_ADMIN, ROLES.SUPER_ADMIN),
   validate(profileSchema), asyncHandler(controller.updateProfile),
 );
 

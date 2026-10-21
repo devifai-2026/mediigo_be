@@ -4,8 +4,8 @@ import { validate } from '../../middleware/validate.js';
 import { requireAuth, requireActiveUser } from '../../middleware/auth.js';
 import { requireRole } from '../../middleware/rbac.js';
 import { ROLES } from '../../config/constants.js';
-import { createSchema, listSchema } from './schema.js';
-import { createPrescription, listPrescriptions, getPrescription } from './service.js';
+import { createSchema, listSchema, lookupSchema } from './schema.js';
+import { createPrescription, listPrescriptions, getPrescription, lookupByPhone } from './service.js';
 
 export const prescriptionRoutes = Router();
 
@@ -28,6 +28,16 @@ prescriptionRoutes.get(
   validate(listSchema),
   asyncHandler(async (req, res) => {
     res.json({ ok: true, data: await listPrescriptions({ query: req.query, actor: req.user }) });
+  }),
+);
+
+// EMR lookup by the patient's mobile number. Declared before '/:id'.
+prescriptionRoutes.get(
+  '/lookup',
+  requireRole(ROLES.DOCTOR, ROLES.RECEPTIONIST, ROLES.SUPER_ADMIN),
+  validate(lookupSchema),
+  asyncHandler(async (req, res) => {
+    res.json({ ok: true, data: await lookupByPhone({ query: req.query, actor: req.user }) });
   }),
 );
 

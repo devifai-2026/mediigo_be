@@ -49,7 +49,8 @@ export const expenseSchema = {
   body: z.object({
     amount: z.coerce.number().int('Whole rupees only').min(1, 'Amount must be at least ₹1').max(100000),
     category: z.string().trim().min(2, 'Say what it was for').max(120),
-    note: z.string().trim().max(300).optional(),
+    // Mandatory: an expense nobody can explain at day close is a hole in the drawer.
+    note: z.string({ required_error: 'Add a remark' }).trim().min(3, 'Add a remark of at least 3 characters').max(300),
   }),
 };
 

@@ -23,10 +23,33 @@ const doctorSchema = new mongoose.Schema(
      */
     specialtyIds: { type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Specialty' }], default: [] },
     qualifications: { type: [String], default: [] },
+    // Role at the clinic as the clinic states it — "Chief Cardiologist", "Consultant".
+    designation: { type: String, default: '', trim: true },
+    /**
+     * Registration with the medical council. Set at onboarding and locked
+     * afterwards — only a super admin may correct it (see profileFields.js).
+     * The patient page shows all three as one "Registration" line.
+     */
     councilRegNo: { type: String, required: true, trim: true },
+    registrationCouncil: { type: String, default: '', trim: true },
+    registrationYear: { type: Number, default: null },
     chamberNumber: { type: String, default: '' },
     experienceYears: Number,
     languages: { type: [String], default: ['English'] },
+
+    /**
+     * The public profile beyond the booking basics. Each list renders as its
+     * own section on the patient's doctor page, and a section with nothing in
+     * it is simply not drawn — so all of these are optional.
+     */
+    about: { type: String, default: '', trim: true },
+    conditionsTreated: { type: [String], default: [] },
+    proceduresPerformed: { type: [String], default: [] },
+    education: { type: [String], default: [] },
+    memberships: { type: [String], default: [] },
+    trainings: { type: [String], default: [] },
+    awards: { type: [String], default: [] },
+    publications: { type: [String], default: [] },
 
     /**
      * Profile photo, shown on the patient-facing doctor card.
@@ -113,6 +136,13 @@ const doctorSchema = new mongoose.Schema(
       },
     ],
     avgConsultMinutes: { type: Number, default: () => env.MINUTES_PER_CONSULT },
+
+    /**
+     * The clinic's lead doctor: sees the whole clinic's revenue, footfall and
+     * ledger rather than only their own. Usually the owner. Petty cash stays
+     * the front desk's.
+     */
+    isClinicAdmin: { type: Boolean, default: false },
 
     isActive: { type: Boolean, default: true },
     deboardedAt: Date,

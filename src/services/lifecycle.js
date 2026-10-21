@@ -14,6 +14,7 @@ import {
   STANDEE_STATUS, ROLES, RESPONSE_CODES, AUDIT_ACTIONS,
 } from '../config/constants.js';
 import { buildTrial } from './trials.js';
+import { doctorApprovalSchema, clinicDoctorSchema, scheduleFromOpd } from '../modules/doctors/profileFields.js';
 
 // Every legal transition in one frozen map. No controller sets networkState
 // directly — they all go through assertTransition.
@@ -50,7 +51,7 @@ const requireReason = (reason) => {
  * sends it. Normalising once at creation means every surface — cards, rosters,
  * announcements — renders identically, and nobody ever sees "Dr. Dr. Aditi".
  */
-const withDoctorTitle = (raw) => {
+export const withDoctorTitle = (raw) => {
   const bare = String(raw || '').replace(/^\s*(dr|doctor)\.?\s+/i, '').trim();
   return bare ? `Dr. ${bare}` : bare;
 };
@@ -93,7 +94,11 @@ export const approveSubmission = async ({ submissionId, actor, ip, userAgent, pa
           districtId: submission.districtId,
           address: { ...p.address, formatted: submission.geocodeResult.formatted },
           location: { type: 'Point', coordinates: [submission.geocodeResult.lng, submission.geocodeResult.lat] },
-          geocode: { source: 'GOOGLE', accuracy: submission.geocodeResult.accuracy, geocodedAt: new Date() },
+          geocode: {
+            source: submission.geocodeResult.accuracy === 'MAP_PIN' ? 'MANUAL' : 'GOOGLE',
+            accuracy: submission.geocodeResult.accuracy,
+            geocodedAt: new Date(),
+          },
           subscriptionPlan: p.subscriptionPlan || 'FREE',
           // Free trial starts the moment the clinic goes live, not when the
           // submission was filed — a clinic waiting a week on approval should
@@ -103,7 +108,16 @@ export const approveSubmission = async ({ submissionId, actor, ip, userAgent, pa
           onboardedBy: submission.agentId,
           approvedBy: actor.id,
           submissionId: submission._id,
-          contactPhone: p.primaryContact?.phone,
+          // The clinic's own number when the agent took one; otherwise the desk's.
+          contactPhone: p.contactPhone || p.primaryContact?.phone,
+          contactEmail: p.contactEmail || undefined,
+          facilities: Array.isArray(p.facilities) ? p.facilities : [],
+          consultationRooms: p.consultationRooms ?? null,
+          // Optional photos taken on site; a clinic without them shows none.
+          photos: (Array.isArray(p.photos) ? p.photos : [])
+            .filter((ph) => ph?.url && ['INSIDE', 'OUTSIDE'].includes(ph.kind))
+            .slice(0, 12)
+            .map((ph) => ({ url: ph.url, kind: ph.kind, caption: String(ph.caption || '').slice(0, 120), objectPath: ph.objectPath ?? null })),
         };
 
         let hospital;
@@ -125,6 +139,10 @@ export const approveSubmission = async ({ submissionId, actor, ip, userAgent, pa
           );
         }
 
+        // Every login made here, so the approver can hand each one over. Each
+        // password is shown exactly once, in this response.
+        const credentials = [];
+
         // The front desk needs an account from day one.
         if (p.primaryContact?.phone) {
           const already = await User.findOne({ phone: p.primaryContact.phone }).session(session);
@@ -134,6 +152,7 @@ export const approveSubmission = async ({ submissionId, actor, ip, userAgent, pa
               [{
                 phone: p.primaryContact.phone,
                 name: p.primaryContact.name || `${p.name} Reception`,
+                email: p.receptionistEmail || null,
                 role: ROLES.RECEPTIONIST,
                 passwordHash: await hashPassword(tempPassword),
                 hospitalId: hospital._id,
@@ -142,11 +161,55 @@ export const approveSubmission = async ({ submissionId, actor, ip, userAgent, pa
               { session },
             );
             created = { tempPassword };
+            credentials.push({ role: ROLES.RECEPTIONIST, name: p.primaryContact.name || 'Front desk', phone: p.primaryContact.phone, email: p.receptionistEmail || null, tempPassword });
           }
         }
 
+        // The doctors captured with the clinic, each with the clinic's OPD
+        // pattern as their starting schedule.
+        const schedule = scheduleFromOpd(p.opd);
+        const createdDoctors = [];
+        for (const raw of Array.isArray(p.doctors) ? p.doctors : []) {
+          const parsed = clinicDoctorSchema.safeParse(raw);
+          if (!parsed.success) {
+            throw validationError(parsed.error.issues.map((i) => ({ path: `payload.doctors.${i.path.join('.')}`, message: i.message })));
+          }
+          const { phone, email, photo, isClinicAdmin, ...profile } = parsed.data;
+          const tempPassword = password || randomToken(6);
+          const name = withDoctorTitle(profile.name);
+          // eslint-disable-next-line no-await-in-loop
+          const [user] = await User.create(
+            [{
+              phone, name, email: email || null, role: ROLES.DOCTOR,
+              passwordHash: await hashPassword(tempPassword),
+              hospitalId: hospital._id, createdBy: actor.id,
+            }],
+            { session },
+          );
+          // eslint-disable-next-line no-await-in-loop
+          const [doctor] = await Doctor.create(
+            [{
+              ...profile,
+              name,
+              userId: user._id,
+              hospitalId: hospital._id,
+              isClinicAdmin: Boolean(isClinicAdmin),
+              schedule,
+              ...(p.opd?.avgConsultMinutes ? { avgConsultMinutes: p.opd.avgConsultMinutes } : {}),
+              ...(photo?.url ? { photo: { url: photo.url, objectPath: photo.objectPath ?? null, updatedAt: new Date() } } : {}),
+              // Open for bookings straight away: the clinic was just approved.
+              session: { isBookingOpen: true },
+            }],
+            { session },
+          );
+          // eslint-disable-next-line no-await-in-loop
+          await User.updateOne({ _id: user._id }, { $set: { doctorId: doctor._id } }, { session });
+          createdDoctors.push(String(doctor._id));
+          credentials.push({ role: ROLES.DOCTOR, name, phone, email: email || null, isClinicAdmin: Boolean(isClinicAdmin), tempPassword });
+        }
+
         submission.createdHospitalId = hospital._id;
-        created = { ...(created || {}), hospital: hospital.toObject() };
+        created = { ...(created || {}), hospital: hospital.toObject(), credentials, doctorIds: createdDoctors };
       }
 
       if (submission.kind === 'DOCTOR') {
@@ -164,17 +227,29 @@ export const approveSubmission = async ({ submissionId, actor, ip, userAgent, pa
           }],
           { session },
         );
+        // Every profile field the form collected, through the same definition
+        // that validated it on submit — not a hand-kept list that drifts.
+        const parsed = doctorApprovalSchema.safeParse(p);
+        if (!parsed.success) {
+          throw validationError(parsed.error.issues.map((i) => ({ path: `payload.${i.path.join('.')}`, message: i.message })));
+        }
+        const profile = parsed.data;
+        delete profile.phone;
+        delete profile.hospitalId;
         const [doctor] = await Doctor.create(
           [{
-            userId: user._id, hospitalId: hospital._id, name: withDoctorTitle(p.name), specialty: p.specialty,
-            qualifications: p.qualifications || [], councilRegNo: p.councilRegNo,
-            chamberNumber: p.chamberNumber, fees: p.fees,
+            ...profile,
+            userId: user._id, hospitalId: hospital._id, name: withDoctorTitle(profile.name),
           }],
           { session },
         );
         await User.updateOne({ _id: user._id }, { $set: { doctorId: doctor._id } }, { session });
         submission.createdDoctorId = doctor._id;
-        created = { doctor: doctor.toObject(), tempPassword };
+        created = {
+          doctor: doctor.toObject(),
+          tempPassword,
+          credentials: [{ role: ROLES.DOCTOR, name: doctor.name, phone: p.phone, email: null, tempPassword }],
+        };
       }
 
       submission.status = SUBMISSION_STATUS.APPROVED;

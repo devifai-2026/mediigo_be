@@ -14,6 +14,7 @@ const hospitalSchema = new mongoose.Schema(
       line1: { type: String, required: true },
       line2: String,
       city: { type: String, required: true },
+      district: String,
       state: { type: String, required: true },
       pincode: { type: String, required: true },
       formatted: String,
@@ -32,6 +33,10 @@ const hospitalSchema = new mongoose.Schema(
 
     contactPhone: String,
     contactEmail: String,
+    // Captured at onboarding. Facilities are shown to patients on the doctor's
+    // page; rooms tell ops how many doctors can sit at once.
+    facilities: { type: [String], default: [] },
+    consultationRooms: { type: Number, default: null, min: 0 },
 
     /**
      * Photos of the premises, shown to patients on each doctor's profile so
@@ -43,6 +48,8 @@ const hospitalSchema = new mongoose.Schema(
         url: { type: String, required: true },
         kind: { type: String, enum: ['INSIDE', 'OUTSIDE'], required: true },
         caption: { type: String, default: '', maxlength: 120 },
+        // Storage key, so a removed photo's object can be deleted too.
+        objectPath: { type: String, default: null },
       }],
       default: [],
     },
