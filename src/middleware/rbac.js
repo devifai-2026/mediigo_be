@@ -21,6 +21,7 @@ export const scopeFilter = (user) => {
       return { districtId: user.districtId };
     case ROLES.RECEPTIONIST:
     case ROLES.DOCTOR:
+    case ROLES.PHARMACIST:
       return { hospitalId: user.hospitalId };
     case ROLES.FIELD_AGENT:
       return { agentId: user.id };
@@ -55,7 +56,7 @@ export const assertHospitalScope = (user, hospital) => {
     if (!sameId(hospital.districtId, user.districtId)) throw denied('hospital');
     return true;
   }
-  if (user.role === ROLES.DOCTOR || user.role === ROLES.RECEPTIONIST) {
+  if ([ROLES.DOCTOR, ROLES.RECEPTIONIST, ROLES.PHARMACIST].includes(user.role)) {
     if (!sameId(hospital._id, user.hospitalId)) throw denied('hospital');
     return true;
   }

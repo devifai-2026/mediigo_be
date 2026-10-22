@@ -10,7 +10,7 @@ import { setIo } from './emitters.js';
 import { ROLES, SOCKET_EVENTS } from '../config/constants.js';
 import {
   chamberRoom, chamberPublicRoom, hospitalRoom, hospitalPublicRoom,
-  districtRoom, patientRoom, PLATFORM_ROOM,
+  districtRoom, patientRoom, pharmacyRoom, PLATFORM_ROOM,
 } from './rooms.js';
 
 const PUBLIC_ROLE = 'PUBLIC';
@@ -77,6 +77,9 @@ export const initSocket = (httpServer) => {
         break;
       case ROLES.RECEPTIONIST:
         if (u.hospitalId) socket.join(hospitalRoom(u.hospitalId));
+        break;
+      case ROLES.PHARMACIST:
+        if (u.hospitalId) socket.join(pharmacyRoom(u.hospitalId));
         break;
       case ROLES.EXEC_ADMIN:
         if (u.districtId) socket.join(districtRoom(u.districtId));

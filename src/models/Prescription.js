@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { PHARMACY_STATUS } from '../config/constants.js';
 
 /**
  * A prescription written in the chamber, kept as the patient's EMR.
@@ -49,6 +50,27 @@ const prescriptionSchema = new mongoose.Schema(
     totalDue: { type: Number, default: null, min: 0 },
     hospitalName: { type: String, default: '' },
 
+    // Fulfilment at the clinic pharmacy. Unlike the clinical content above this
+    // is workflow state and does change: sent → dispensed. Absent (null) when
+    // the doctor did not send it — the patient may buy elsewhere.
+    pharmacy: {
+      type: new mongoose.Schema(
+        {
+          status: { type: String, enum: Object.values(PHARMACY_STATUS), required: true },
+          sentAt: { type: Date, required: true },
+          sentBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+          dispensedAt: { type: Date, default: null },
+          dispensedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+          dispensedByName: { type: String, default: '' },
+          // Medicine names that could not be given, for a PARTIAL dispense.
+          unavailable: { type: [String], default: [] },
+          note: { type: String, trim: true, maxlength: 300, default: '' },
+        },
+        { _id: false },
+      ),
+      default: null,
+    },
+
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   },
   { timestamps: true },
@@ -57,5 +79,9 @@ const prescriptionSchema = new mongoose.Schema(
 prescriptionSchema.index({ patientId: 1, createdAt: -1 });
 prescriptionSchema.index({ hospitalId: 1, date: 1 });
 prescriptionSchema.index({ tokenId: 1 });
+// The pad's suggestions read one doctor's recent prescriptions.
+prescriptionSchema.index({ doctorId: 1, createdAt: -1 });
+// The pharmacy queue: one clinic's sent prescriptions by state, newest first.
+prescriptionSchema.index({ hospitalId: 1, 'pharmacy.status': 1, 'pharmacy.sentAt': -1 });
 
 export const Prescription = mongoose.model('Prescription', prescriptionSchema);

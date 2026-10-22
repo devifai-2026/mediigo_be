@@ -17,13 +17,15 @@ export const createSchema = {
     advice: z.string().trim().max(1000).optional().default(''),
     reviewDate: z.string().regex(DATE_RE).optional().nullable(),
     totalDue: z.coerce.number().min(0).max(1000000).optional().nullable(),
+    // Send to the clinic's pharmacy as part of saving.
+    sendToPharmacy: z.boolean().optional().default(false),
   }),
 };
 
 export const lookupSchema = {
   query: z.object({
     phone: z.string().transform((v) => v.replace(/\D/g, '').slice(-10)).pipe(z.string().length(10, 'Enter a 10-digit mobile number')),
-    visits: z.coerce.number().int().min(1).max(20).optional(),
+    visits: z.coerce.number().int().min(1).max(50).optional(),
   }),
 };
 
@@ -35,4 +37,8 @@ export const listSchema = {
     date: z.string().regex(DATE_RE).optional(),
     limit: z.coerce.number().int().min(1).max(100).optional(),
   }),
+};
+
+export const suggestSchema = {
+  query: z.object({ q: z.string().trim().max(60).optional().default('') }),
 };

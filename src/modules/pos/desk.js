@@ -228,8 +228,13 @@ export const footfall = async ({ actor, query }) => {
       .sort({ date: 1, createdAt: 1 }).limit(2000).lean(),
     Doctor.find({ hospitalId: hospital._id }).select('name chamberNumber specialty').lean(),
   ]);
-  const rx = await Prescription.find({ tokenId: { $in: tokens.map((t) => t._id) } })
-    .sort({ createdAt: -1 }).lean();
+  // Visits are the clinic's footfall; what was prescribed is the treating
+  // doctor's record. A clinic-admin doctor sees every visit, but only their
+  // own patients' prescriptions.
+  const rx = await Prescription.find({
+    tokenId: { $in: tokens.map((t) => t._id) },
+    ...(actor.role === ROLES.DOCTOR ? { doctorId: actor.doctorId } : {}),
+  }).sort({ createdAt: -1 }).lean();
   const rxByToken = new Map();
   for (const r of rx) {
     const k = String(r.tokenId);

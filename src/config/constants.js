@@ -8,6 +8,9 @@ export const ROLES = {
   PATIENT: 'PATIENT',
   DOCTOR: 'DOCTOR',
   RECEPTIONIST: 'RECEPTIONIST',
+  // The clinic's own pharmacy: reads the prescriptions its doctors send and
+  // records what was dispensed. Added by the clinic, scoped to it.
+  PHARMACIST: 'PHARMACIST',
   FIELD_AGENT: 'FIELD_AGENT',
   EXEC_ADMIN: 'EXEC_ADMIN',
   SUPER_ADMIN: 'SUPER_ADMIN',
@@ -18,6 +21,7 @@ export const ROLES = {
 export const STAFF_ROLES = [
   ROLES.DOCTOR,
   ROLES.RECEPTIONIST,
+  ROLES.PHARMACIST,
   ROLES.FIELD_AGENT,
   ROLES.EXEC_ADMIN,
   ROLES.SUPER_ADMIN,
@@ -198,6 +202,9 @@ export const SOCKET_EVENTS = {
   TRANSACTION_RECORDED: 'TRANSACTION_RECORDED',
   // A token taken off a doctor's list by someone other than that doctor.
   TOKEN_CANCELLED: 'TOKEN_CANCELLED',
+  // A prescription sent to the clinic pharmacy, and its dispensing updates.
+  PHARMACY_RX_NEW: 'PHARMACY_RX_NEW',
+  PHARMACY_RX_UPDATED: 'PHARMACY_RX_UPDATED',
 };
 
 export const AUDIT_ACTIONS = {
@@ -225,6 +232,19 @@ export const AUDIT_ACTIONS = {
   REVIEW_MODERATED: 'REVIEW_MODERATED',
   TOKEN_CANCELLED: 'TOKEN_CANCELLED',
   PRESCRIPTION_WRITTEN: 'PRESCRIPTION_WRITTEN',
+  PRESCRIPTION_SENT_TO_PHARMACY: 'PRESCRIPTION_SENT_TO_PHARMACY',
+  PRESCRIPTION_DISPENSED: 'PRESCRIPTION_DISPENSED',
   PETTY_EXPENSE_LOGGED: 'PETTY_EXPENSE_LOGGED',
   PETTY_EXPENSE_VOIDED: 'PETTY_EXPENSE_VOIDED',
+};
+
+/**
+ * Where a prescription stands at the clinic pharmacy. Absent until the doctor
+ * sends it. PARTIAL means some medicines were out of stock and the patient was
+ * told to buy them elsewhere; the record says which.
+ */
+export const PHARMACY_STATUS = {
+  PENDING: 'PENDING',
+  DISPENSED: 'DISPENSED',
+  PARTIAL: 'PARTIAL',
 };
