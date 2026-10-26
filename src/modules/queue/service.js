@@ -70,11 +70,41 @@ export const transition = async (token, to, { actor, reason, outcome, outcomeNot
 };
 
 /**
+ * Put a waiting token in the chamber: the one way a patient goes in, whether
+ * by "Call next" or by calling a particular token from the list, so both
+ * announce it and both move the doctor's "now serving".
+ */
+const promoteToChamber = async (token, doctor, actor) => {
+  const called = await transition(token, TOKEN_STATUS.IN_CHAMBER, { actor });
+  await Doctor.updateOne(
+    { _id: doctor._id },
+    { $set: { 'session.lastCalledToken': called.tokenNumber, 'session.currentTokenId': called._id } },
+  );
+  await OPDToken.updateOne({ _id: called._id }, { $set: { calledAt: new Date() } });
+  emitCallNext({ token: called, doctor, recall: false });
+  return called;
+};
+
+/** Refuse a second patient into an occupied chamber, naming who is inside. */
+const assertChamberFree = async (doctorId, date, exceptId = null) => {
+  const inside = await OPDToken.findOne({
+    doctorId, date, status: TOKEN_STATUS.IN_CHAMBER, ...(exceptId ? { _id: { $ne: exceptId } } : {}),
+  }).select('tokenNumber').lean();
+  if (inside) {
+    throw conflict(`Token ${String(inside.tokenNumber).padStart(2, '0')} is in the chamber — mark them complete first`, RESPONSE_CODES.CONFLICT);
+  }
+};
+
+/**
  * Call the next waiting token.
  *
  * Completing the current patient and promoting the next is a single logical
  * step for the doctor, so it happens here rather than requiring two API calls —
  * the prototype's advanceToken() behaviour, but with explicit status history.
+ *
+ * With nobody left waiting, the patient inside is still finished and the call
+ * succeeds with `called: null`: the doctor asked for the consultation to end,
+ * and reporting that as a failure (after doing it) leaves the desk guessing.
  */
 export const callNext = async ({ doctorId, actor, outcome, outcomeNotes }) => {
   const { doctor, hospital } = await loadDoctorAndHospital(doctorId);
@@ -85,27 +115,26 @@ export const callNext = async ({ doctorId, actor, outcome, outcomeNotes }) => {
     throw conflict('End the break before calling the next patient', RESPONSE_CODES.CONFLICT);
   }
 
-  // Close out whoever is in the chamber.
-  const current = await OPDToken.findOne({ doctorId: doctor._id, date, status: TOKEN_STATUS.IN_CHAMBER });
-  if (current) await transition(current, TOKEN_STATUS.COMPLETED, { actor, outcome, outcomeNotes });
+  // Close out whoever is in the chamber — every one of them, should an older
+  // client ever have let two in, so the chamber is certainly empty after this.
+  const inside = await OPDToken.find({ doctorId: doctor._id, date, status: TOKEN_STATUS.IN_CHAMBER }).sort({ tokenNumber: 1 });
+  for (const t of inside) {
+    // eslint-disable-next-line no-await-in-loop
+    await transition(t, TOKEN_STATUS.COMPLETED, { actor, outcome, outcomeNotes });
+  }
+  const completed = inside[0] ? { tokenNumber: inside[0].tokenNumber } : null;
 
   const next = await OPDToken.findOne({ doctorId: doctor._id, date, status: TOKEN_STATUS.WAITING })
     .sort({ tokenNumber: 1 });
   if (!next) {
     await emitQueueSnapshot(doctor._id, date);
+    if (completed) return { called: null, completed };
     throw conflict('No patients are waiting', RESPONSE_CODES.CONFLICT);
   }
 
-  const called = await transition(next, TOKEN_STATUS.IN_CHAMBER, { actor });
-  await Doctor.updateOne(
-    { _id: doctor._id },
-    { $set: { 'session.lastCalledToken': called.tokenNumber, 'session.currentTokenId': called._id } },
-  );
-  await OPDToken.updateOne({ _id: called._id }, { $set: { calledAt: new Date() } });
-
-  emitCallNext({ token: called, doctor, recall: false });
+  const called = await promoteToChamber(next, doctor, actor);
   await emitQueueSnapshot(doctor._id, date);
-  return { called, completed: current ? { tokenNumber: current.tokenNumber } : null };
+  return { called, completed };
 };
 
 /** Re-announce the current token without changing any state. */
@@ -140,6 +169,17 @@ export const setTokenStatus = async ({ tokenId, to, reason, actor, outcome, outc
   };
   if (!legal[token.status]?.includes(to)) {
     throw conflict(`Cannot move a token from ${token.status} to ${to}`, RESPONSE_CODES.ILLEGAL_TRANSITION);
+  }
+
+  // Calling a particular token from the list is still a call: one patient
+  // in the chamber at a time, announced like "Call next".
+  if (to === TOKEN_STATUS.IN_CHAMBER) {
+    await assertChamberFree(token.doctorId, token.date, token._id);
+    const { doctor } = await loadDoctorAndHospital(token.doctorId);
+    if (doctor.session?.isOnBreak) throw conflict('End the break before calling a patient', RESPONSE_CODES.CONFLICT);
+    const called = await promoteToChamber(token, doctor, actor);
+    await emitQueueSnapshot(token.doctorId, token.date);
+    return called;
   }
 
   const updated = await transition(token, to, { actor, reason, outcome, outcomeNotes });

@@ -65,7 +65,7 @@ export const withDoctorTitle = (raw) => {
  * leaves an account nobody can log into. Passing a password avoids that.
  */
 export const approveSubmission = async ({ submissionId, actor, ip, userAgent, password, trialDays }) => {
-  const submission = await OnboardingSubmission.findById(submissionId);
+  const submission = await OnboardingSubmission.findById(submissionId).select('+loginPasswordHash');
   if (!submission) throw notFound('Submission not found');
   assertSubmissionScope(actor, submission);
 
@@ -77,6 +77,21 @@ export const approveSubmission = async ({ submissionId, actor, ip, userAgent, pa
   if (submission.kind === 'HOSPITAL' && (!submission.geocodeResult?.lat || !submission.geocodeResult?.lng)) {
     throw conflict('This submission has no verified location — geocode it before approving');
   }
+
+  /**
+   * Each new login's sign-in, most specific first: a password the approver
+   * typed, then the agent's choice made with the clinic, else a random one.
+   * Only a password nobody else knows is returned for handing over; the
+   * agent's is already with the clinic, and an OTP login has none.
+   */
+  const secretFor = async () => {
+    if (!password && submission.loginMethod === 'OTP') return { passwordHash: null, tempPassword: null, signIn: 'OTP' };
+    if (!password && submission.loginPasswordHash) {
+      return { passwordHash: submission.loginPasswordHash, tempPassword: null, signIn: 'AGENT_PASSWORD' };
+    }
+    const tempPassword = password || randomToken(6);
+    return { passwordHash: await hashPassword(tempPassword), tempPassword, signIn: 'TEMP_PASSWORD' };
+  };
 
   const session = await mongoose.startSession();
   let created;
@@ -147,21 +162,21 @@ export const approveSubmission = async ({ submissionId, actor, ip, userAgent, pa
         if (p.primaryContact?.phone) {
           const already = await User.findOne({ phone: p.primaryContact.phone }).session(session);
           if (!already) {
-            const tempPassword = password || randomToken(6);
+            const { passwordHash, tempPassword, signIn } = await secretFor();
             await User.create(
               [{
                 phone: p.primaryContact.phone,
                 name: p.primaryContact.name || `${p.name} Reception`,
                 email: p.receptionistEmail || null,
                 role: ROLES.RECEPTIONIST,
-                passwordHash: await hashPassword(tempPassword),
+                passwordHash,
                 hospitalId: hospital._id,
                 createdBy: actor.id,
               }],
               { session },
             );
             created = { tempPassword };
-            credentials.push({ role: ROLES.RECEPTIONIST, name: p.primaryContact.name || 'Front desk', phone: p.primaryContact.phone, email: p.receptionistEmail || null, tempPassword });
+            credentials.push({ role: ROLES.RECEPTIONIST, name: p.primaryContact.name || 'Front desk', phone: p.primaryContact.phone, email: p.receptionistEmail || null, tempPassword, signIn });
           }
         }
 
@@ -175,13 +190,14 @@ export const approveSubmission = async ({ submissionId, actor, ip, userAgent, pa
             throw validationError(parsed.error.issues.map((i) => ({ path: `payload.doctors.${i.path.join('.')}`, message: i.message })));
           }
           const { phone, email, photo, isClinicAdmin, ...profile } = parsed.data;
-          const tempPassword = password || randomToken(6);
+          // eslint-disable-next-line no-await-in-loop
+          const { passwordHash, tempPassword, signIn } = await secretFor();
           const name = withDoctorTitle(profile.name);
           // eslint-disable-next-line no-await-in-loop
           const [user] = await User.create(
             [{
               phone, name, email: email || null, role: ROLES.DOCTOR,
-              passwordHash: await hashPassword(tempPassword),
+              passwordHash,
               hospitalId: hospital._id, createdBy: actor.id,
             }],
             { session },
@@ -205,7 +221,7 @@ export const approveSubmission = async ({ submissionId, actor, ip, userAgent, pa
           // eslint-disable-next-line no-await-in-loop
           await User.updateOne({ _id: user._id }, { $set: { doctorId: doctor._id } }, { session });
           createdDoctors.push(String(doctor._id));
-          credentials.push({ role: ROLES.DOCTOR, name, phone, email: email || null, isClinicAdmin: Boolean(isClinicAdmin), tempPassword });
+          credentials.push({ role: ROLES.DOCTOR, name, phone, email: email || null, isClinicAdmin: Boolean(isClinicAdmin), tempPassword, signIn });
         }
 
         submission.createdHospitalId = hospital._id;
@@ -218,11 +234,11 @@ export const approveSubmission = async ({ submissionId, actor, ip, userAgent, pa
         if (hospital.networkState !== NETWORK_STATE.ACTIVE) {
           throw conflict('The parent clinic must be active before adding a doctor');
         }
-        const tempPassword = password || randomToken(6);
+        const { passwordHash, tempPassword, signIn } = await secretFor();
         const [user] = await User.create(
           [{
             phone: p.phone, name: withDoctorTitle(p.name), role: ROLES.DOCTOR,
-            passwordHash: await hashPassword(tempPassword),
+            passwordHash,
             hospitalId: hospital._id, createdBy: actor.id,
           }],
           { session },
@@ -248,11 +264,13 @@ export const approveSubmission = async ({ submissionId, actor, ip, userAgent, pa
         created = {
           doctor: doctor.toObject(),
           tempPassword,
-          credentials: [{ role: ROLES.DOCTOR, name: doctor.name, phone: p.phone, email: null, tempPassword }],
+          credentials: [{ role: ROLES.DOCTOR, name: doctor.name, phone: p.phone, email: null, tempPassword, signIn }],
         };
       }
 
       submission.status = SUBMISSION_STATUS.APPROVED;
+      // Every login now holds its own copy; the submission need not keep one.
+      submission.loginPasswordHash = null;
       submission.reviewedBy = actor.id;
       submission.reviewedAt = new Date();
       await submission.save({ session });

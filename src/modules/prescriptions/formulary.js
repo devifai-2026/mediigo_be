@@ -1,0 +1,338 @@
+/**
+ * A starter formulary of medicines commonly written in Indian OPDs: the
+ * brands a doctor actually puts on the pad, with their composition so a
+ * search for the molecule finds the brand too.
+ *
+ * It is a typing aid, not a drug database. The doctor's own prescribing
+ * history ranks above it in every search, and anything not listed can still
+ * be typed freely. To swap in a fuller, licensed dataset later, replace this
+ * export with the same shape: { name, generic, dosage?, duration?, instruction? }.
+ *
+ * Each group carries the usual way that class is taken, so picking a medicine
+ * fills a sensible dose, course and timing for the doctor to adjust.
+ */
+
+const group = (defaults, rows) => rows.map(([name, generic, own = {}]) => ({ name, generic, ...defaults, ...own }));
+
+const BEDTIME = { dosage: '0-0-1', instruction: 'At bedtime' };
+const MORNING_EMPTY = { dosage: '1-0-0', instruction: 'Before breakfast' };
+const CHRONIC = { dosage: '1-0-0', duration: '1 Month', instruction: 'After meals' };
+const LOCAL = { dosage: '1-0-1', duration: '7 Days', instruction: 'Apply locally' };
+
+export const FORMULARY = [
+  // Fever and pain
+  ...group({ dosage: '1-0-1', duration: '3 Days', instruction: 'After meals' }, [
+    ['Tab Dolo 650', 'Paracetamol 650mg', { dosage: '1-1-1' }],
+    ['Tab Calpol 650', 'Paracetamol 650mg', { dosage: '1-1-1' }],
+    ['Tab Calpol 500', 'Paracetamol 500mg', { dosage: '1-1-1' }],
+    ['Tab Crocin 500', 'Paracetamol 500mg', { dosage: '1-1-1' }],
+    ['Tab Crocin Advance', 'Paracetamol 500mg', { dosage: '1-1-1' }],
+    ['Tab Paracetamol 650mg', 'Paracetamol 650mg', { dosage: '1-1-1' }],
+    ['Tab Paracetamol 500mg', 'Paracetamol 500mg', { dosage: '1-1-1' }],
+    ['Tab Combiflam', 'Ibuprofen 400mg + Paracetamol 325mg'],
+    ['Tab Brufen 400', 'Ibuprofen 400mg'],
+    ['Tab Zerodol-P', 'Aceclofenac 100mg + Paracetamol 325mg'],
+    ['Tab Zerodol-SP', 'Aceclofenac 100mg + Paracetamol 325mg + Serratiopeptidase 15mg'],
+    ['Tab Hifenac-P', 'Aceclofenac 100mg + Paracetamol 325mg'],
+    ['Tab Aceclofenac 100mg', 'Aceclofenac 100mg'],
+    ['Tab Voveran 50', 'Diclofenac 50mg'],
+    ['Tab Voveran SR 100', 'Diclofenac 100mg SR', { dosage: '1-0-0' }],
+    ['Tab Ultracet', 'Tramadol 37.5mg + Paracetamol 325mg'],
+    ['Tab Meftal-Spas', 'Mefenamic acid 250mg + Dicyclomine 10mg', { dosage: 'SOS' }],
+    ['Tab Etoshine 90', 'Etoricoxib 90mg', { dosage: '1-0-0' }],
+    ['Tab Etoricoxib 60mg', 'Etoricoxib 60mg', { dosage: '1-0-0' }],
+    ['Tab Naproxen 500mg', 'Naproxen 500mg'],
+    ['Tab Myospaz Forte', 'Chlorzoxazone 500mg + Paracetamol 325mg'],
+    ['Cap Thiocolchicoside 4mg', 'Thiocolchicoside 4mg'],
+    ['Tab Tramadol 50mg', 'Tramadol 50mg', { dosage: 'SOS' }],
+  ]),
+
+  // Acidity, nausea and the gut
+  ...group({ ...MORNING_EMPTY, duration: '7 Days' }, [
+    ['Tab Pan 40', 'Pantoprazole 40mg'],
+    ['Tab Pantocid 40', 'Pantoprazole 40mg'],
+    ['Tab Pantoprazole 40mg', 'Pantoprazole 40mg'],
+    ['Cap Pan-D', 'Pantoprazole 40mg + Domperidone 30mg SR'],
+    ['Cap Pantocid DSR', 'Pantoprazole 40mg + Domperidone 30mg SR'],
+    ['Tab Razo 20', 'Rabeprazole 20mg'],
+    ['Cap Razo-D', 'Rabeprazole 20mg + Domperidone 30mg SR'],
+    ['Tab Rabeprazole 20mg', 'Rabeprazole 20mg'],
+    ['Cap Omez 20', 'Omeprazole 20mg'],
+    ['Cap Omez-D', 'Omeprazole 20mg + Domperidone 10mg'],
+    ['Tab Nexpro 40', 'Esomeprazole 40mg'],
+    ['Tab Famocid 40', 'Famotidine 40mg', { dosage: '0-0-1', instruction: 'At bedtime' }],
+  ]),
+  ...group({ dosage: '1-1-1', duration: '5 Days', instruction: 'After meals' }, [
+    ['Syr Gelusil MPS', 'Aluminium hydroxide + Magnesium hydroxide + Simethicone', { dosage: '2 tsp TDS' }],
+    ['Syr Digene', 'Aluminium hydroxide + Magnesium hydroxide + Simethicone', { dosage: '2 tsp TDS' }],
+    ['Syr Sucralfate', 'Sucralfate 1g/10ml', { dosage: '2 tsp TDS', instruction: 'Before meals' }],
+    ['Tab Domstal 10', 'Domperidone 10mg', { instruction: 'Before meals' }],
+    ['Tab Emeset 4', 'Ondansetron 4mg', { dosage: 'SOS', instruction: 'For vomiting' }],
+    ['Tab Ondem 4 MD', 'Ondansetron 4mg (mouth dissolving)', { dosage: 'SOS', instruction: 'For vomiting' }],
+    ['Tab Vomikind 4', 'Ondansetron 4mg', { dosage: 'SOS', instruction: 'For vomiting' }],
+    ['Tab Cyclopam', 'Dicyclomine 20mg + Paracetamol 500mg', { dosage: 'SOS', instruction: 'For abdominal pain' }],
+    ['Tab Drotin 40', 'Drotaverine 40mg', { dosage: 'SOS', instruction: 'For abdominal pain' }],
+    ['Tab Drotin-M', 'Drotaverine 80mg + Mefenamic acid 250mg', { dosage: 'SOS', instruction: 'For abdominal pain' }],
+    ['Cap Eldoper', 'Loperamide 2mg', { dosage: 'SOS', instruction: 'After each loose stool' }],
+    ['Cap Redotil 100', 'Racecadotril 100mg'],
+    ['Tab Norflox-TZ', 'Norfloxacin 400mg + Tinidazole 600mg', { dosage: '1-0-1' }],
+    ['Tab O2', 'Ofloxacin 200mg + Ornidazole 500mg', { dosage: '1-0-1' }],
+    ['Tab Flagyl 400', 'Metronidazole 400mg'],
+    ['Tab Metrogyl 400', 'Metronidazole 400mg'],
+    ['Tab Udiliv 300', 'Ursodeoxycholic acid 300mg', { dosage: '1-0-1', duration: '1 Month' }],
+    ['Tab Liv 52', 'Herbal hepatoprotective', { dosage: '1-0-1', duration: '1 Month' }],
+  ]),
+  ...group({ dosage: '1-1-1', duration: '3 Days', instruction: 'After each loose stool' }, [
+    ['Pow Electral ORS', 'Oral rehydration salts (WHO)', { dosage: '1 sachet in 1L water', instruction: 'Sip through the day' }],
+    ['Cap Sporlac', 'Lactic acid bacillus', { dosage: '1-0-1', instruction: 'After meals' }],
+    ['Sachet Econorm 250', 'Saccharomyces boulardii 250mg', { dosage: '1-0-1', instruction: 'Mix in water' }],
+    ['Amp Enterogermina', 'Bacillus clausii 2 billion spores/5ml', { dosage: '1-0-1', instruction: 'Drink directly' }],
+  ]),
+  ...group({ ...BEDTIME, duration: '7 Days' }, [
+    ['Syr Cremaffin', 'Liquid paraffin + Milk of magnesia', { dosage: '2 tsp HS' }],
+    ['Syr Duphalac', 'Lactulose 10g/15ml', { dosage: '2 tsp HS' }],
+    ['Tab Dulcolax 5', 'Bisacodyl 5mg'],
+    ['Pow Isabgol husk', 'Ispaghula husk', { dosage: '2 tsp HS', instruction: 'In warm water at bedtime' }],
+  ]),
+  ...group({ dosage: 'Single dose', duration: '1 Day', instruction: 'After meals' }, [
+    ['Tab Zentel 400', 'Albendazole 400mg'],
+    ['Tab Albendazole 400mg', 'Albendazole 400mg'],
+    ['Tab Ivecop 12', 'Ivermectin 12mg', { instruction: 'Empty stomach' }],
+    ['Susp Albendazole 400mg/10ml', 'Albendazole 400mg/10ml', { dosage: '10 ml once' }],
+  ]),
+
+  // Antibiotics, antifungals, antivirals
+  ...group({ dosage: '1-0-1', duration: '5 Days', instruction: 'After meals' }, [
+    ['Tab Augmentin 625 Duo', 'Amoxicillin 500mg + Clavulanic acid 125mg'],
+    ['Tab Moxikind-CV 625', 'Amoxicillin 500mg + Clavulanic acid 125mg'],
+    ['Tab Clavam 625', 'Amoxicillin 500mg + Clavulanic acid 125mg'],
+    ['Cap Mox 500', 'Amoxicillin 500mg', { dosage: '1-1-1' }],
+    ['Cap Novamox 500', 'Amoxicillin 500mg', { dosage: '1-1-1' }],
+    ['Tab Azithral 500', 'Azithromycin 500mg', { dosage: '1-0-0', duration: '3 Days' }],
+    ['Tab Azee 500', 'Azithromycin 500mg', { dosage: '1-0-0', duration: '3 Days' }],
+    ['Tab Azithromycin 500mg', 'Azithromycin 500mg', { dosage: '1-0-0', duration: '3 Days' }],
+    ['Tab Taxim-O 200', 'Cefixime 200mg'],
+    ['Tab Zifi 200', 'Cefixime 200mg'],
+    ['Tab Cefixime 200mg', 'Cefixime 200mg'],
+    ['Tab Ceftum 500', 'Cefuroxime axetil 500mg'],
+    ['Tab Cepodem 200', 'Cefpodoxime 200mg'],
+    ['Cap Phexin 500', 'Cephalexin 500mg', { dosage: '1-1-1' }],
+    ['Cap Doxycycline 100mg', 'Doxycycline 100mg'],
+    ['Tab Ciplox 500', 'Ciprofloxacin 500mg'],
+    ['Tab Cifran 500', 'Ciprofloxacin 500mg'],
+    ['Tab Levoflox 500', 'Levofloxacin 500mg', { dosage: '1-0-0' }],
+    ['Tab Levofloxacin 750mg', 'Levofloxacin 750mg', { dosage: '1-0-0' }],
+    ['Cap Niftran 100', 'Nitrofurantoin 100mg'],
+    ['Tab Claribid 500', 'Clarithromycin 500mg'],
+    ['Tab Lizolid 600', 'Linezolid 600mg'],
+  ]),
+  ...group({ dosage: '1-0-0', duration: '1 Day', instruction: 'After meals' }, [
+    ['Tab Forcan 150', 'Fluconazole 150mg', { dosage: 'Once a week', duration: '2 Weeks' }],
+    ['Tab Zocon 150', 'Fluconazole 150mg', { dosage: 'Once a week', duration: '2 Weeks' }],
+    ['Cap Itraconazole 100mg', 'Itraconazole 100mg', { dosage: '1-0-1', duration: '14 Days' }],
+    ['Cap Itraconazole 200mg', 'Itraconazole 200mg', { duration: '14 Days' }],
+    ['Tab Terbicip 250', 'Terbinafine 250mg', { duration: '14 Days' }],
+    ['Tab Acyclovir 400mg', 'Acyclovir 400mg', { dosage: '1-1-1-1-1', duration: '7 Days' }],
+    ['Tab Acyclovir 800mg', 'Acyclovir 800mg', { dosage: '1-1-1-1-1', duration: '7 Days' }],
+    ['Tab Valcivir 1000', 'Valacyclovir 1000mg', { dosage: '1-1-1', duration: '7 Days' }],
+    ['Cap Fluvir 75', 'Oseltamivir 75mg', { dosage: '1-0-1', duration: '5 Days' }],
+  ]),
+
+  // Allergy, cold, cough and breathing
+  ...group({ ...BEDTIME, duration: '5 Days' }, [
+    ['Tab Cetzine 10', 'Cetirizine 10mg'],
+    ['Tab Okacet 10', 'Cetirizine 10mg'],
+    ['Tab Cetirizine 10mg', 'Cetirizine 10mg'],
+    ['Tab Levocet 5', 'Levocetirizine 5mg'],
+    ['Tab Xyzal 5', 'Levocetirizine 5mg'],
+    ['Tab Levocetirizine 5mg', 'Levocetirizine 5mg'],
+    ['Tab Allegra 120', 'Fexofenadine 120mg', { dosage: '1-0-0', instruction: 'After meals' }],
+    ['Tab Allegra 180', 'Fexofenadine 180mg', { dosage: '1-0-0', instruction: 'After meals' }],
+    ['Tab Montair-LC', 'Montelukast 10mg + Levocetirizine 5mg'],
+    ['Tab Montek LC', 'Montelukast 10mg + Levocetirizine 5mg'],
+    ['Tab Montair 10', 'Montelukast 10mg'],
+    ['Tab Bilaxten 20', 'Bilastine 20mg', { dosage: '1-0-0', instruction: 'Empty stomach' }],
+    ['Tab Atarax 10', 'Hydroxyzine 10mg'],
+    ['Tab Atarax 25', 'Hydroxyzine 25mg'],
+    ['Tab Sinarest', 'Paracetamol + Phenylephrine + Chlorpheniramine', { dosage: '1-0-1', instruction: 'After meals' }],
+    ['Tab Cheston Cold', 'Cetirizine + Paracetamol + Phenylephrine', { dosage: '1-0-1', instruction: 'After meals' }],
+  ]),
+  ...group({ dosage: '2 tsp TDS', duration: '5 Days', instruction: 'After meals' }, [
+    ['Syr Ascoril LS', 'Ambroxol + Levosalbutamol + Guaifenesin'],
+    ['Syr Ascoril D', 'Dextromethorphan + Chlorpheniramine', { instruction: 'For dry cough' }],
+    ['Syr Benadryl', 'Diphenhydramine 14.08mg/5ml'],
+    ['Syr Grilinctus', 'Dextromethorphan + Chlorpheniramine + Guaifenesin + Ammonium chloride'],
+    ['Tab Mucinac 600', 'Acetylcysteine 600mg', { dosage: '1-0-0', instruction: 'Dissolve in water' }],
+    ['Tab Deriphyllin Retard 150', 'Etofylline + Theophylline 150mg', { dosage: '1-0-1' }],
+  ]),
+  ...group({ dosage: '2 puffs', duration: 'Continue', instruction: 'SOS for breathlessness' }, [
+    ['Inh Asthalin 100mcg', 'Salbutamol 100mcg'],
+    ['Inh Foracort 200', 'Formoterol 6mcg + Budesonide 200mcg', { dosage: '2 puffs BD', instruction: 'Rinse mouth after use' }],
+    ['Rotacap Seroflo 250', 'Salmeterol 50mcg + Fluticasone 250mcg', { dosage: '1 cap BD', instruction: 'Rinse mouth after use' }],
+    ['Resp Duolin', 'Levosalbutamol + Ipratropium', { dosage: 'Nebulise TDS', duration: '3 Days', instruction: 'Via nebuliser' }],
+    ['Resp Budecort 0.5mg', 'Budesonide 0.5mg/2ml', { dosage: 'Nebulise BD', duration: '3 Days', instruction: 'Via nebuliser' }],
+    ['Resp Levolin', 'Levosalbutamol 0.63mg/2.5ml', { dosage: 'Nebulise TDS', duration: '3 Days', instruction: 'Via nebuliser' }],
+    ['Nasal spray Otrivin Adult', 'Xylometazoline 0.1%', { dosage: '2 sprays BD', duration: '5 Days', instruction: 'Each nostril' }],
+    ['Nasal spray Flomist', 'Fluticasone 50mcg', { dosage: '2 sprays OD', duration: '1 Month', instruction: 'Each nostril' }],
+  ]),
+  ...group({ dosage: '1-0-0', duration: '5 Days', instruction: 'After breakfast' }, [
+    ['Tab Wysolone 10', 'Prednisolone 10mg'],
+    ['Tab Wysolone 20', 'Prednisolone 20mg'],
+    ['Tab Medrol 4', 'Methylprednisolone 4mg'],
+    ['Tab Medrol 8', 'Methylprednisolone 8mg'],
+    ['Tab Medrol 16', 'Methylprednisolone 16mg'],
+    ['Tab Dexona 0.5', 'Dexamethasone 0.5mg'],
+    ['Tab Deflazacort 6mg', 'Deflazacort 6mg'],
+  ]),
+
+  // Blood pressure, heart, diabetes, thyroid
+  ...group(CHRONIC, [
+    ['Tab Telma 40', 'Telmisartan 40mg'],
+    ['Tab Telma-H', 'Telmisartan 40mg + Hydrochlorothiazide 12.5mg'],
+    ['Tab Telma-AM', 'Telmisartan 40mg + Amlodipine 5mg'],
+    ['Tab Amlong 5', 'Amlodipine 5mg'],
+    ['Tab Amlodipine 5mg', 'Amlodipine 5mg'],
+    ['Tab Losar 50', 'Losartan 50mg'],
+    ['Tab Cilacar 10', 'Cilnidipine 10mg'],
+    ['Tab Met XL 25', 'Metoprolol succinate 25mg'],
+    ['Tab Met XL 50', 'Metoprolol succinate 50mg'],
+    ['Tab Aten 50', 'Atenolol 50mg'],
+    ['Tab Ecosprin 75', 'Aspirin 75mg'],
+    ['Cap Ecosprin AV 75', 'Aspirin 75mg + Atorvastatin 10mg', { dosage: '0-0-1' }],
+    ['Tab Clopilet 75', 'Clopidogrel 75mg'],
+    ['Tab Atorva 10', 'Atorvastatin 10mg', { dosage: '0-0-1' }],
+    ['Tab Atorva 20', 'Atorvastatin 20mg', { dosage: '0-0-1' }],
+    ['Tab Rosuvas 10', 'Rosuvastatin 10mg', { dosage: '0-0-1' }],
+    ['Tab Rozavel 10', 'Rosuvastatin 10mg', { dosage: '0-0-1' }],
+    ['Tab Lasix 40', 'Furosemide 40mg', { instruction: 'Morning' }],
+    ['Tab Dytor 10', 'Torsemide 10mg', { instruction: 'Morning' }],
+    ['Tab Aldactone 25', 'Spironolactone 25mg'],
+    ['Tab Sorbitrate 5', 'Isosorbide dinitrate 5mg', { dosage: 'SOS', instruction: 'Under the tongue for chest pain' }],
+    ['Tab Glycomet 500', 'Metformin 500mg', { dosage: '1-0-1' }],
+    ['Tab Glycomet SR 500', 'Metformin 500mg SR', { dosage: '1-0-1' }],
+    ['Tab Glycomet SR 1000', 'Metformin 1000mg SR', { dosage: '1-0-1' }],
+    ['Tab Glycomet-GP 1', 'Glimepiride 1mg + Metformin 500mg', { dosage: '1-0-1', instruction: 'Before meals' }],
+    ['Tab Glycomet-GP 2', 'Glimepiride 2mg + Metformin 500mg', { dosage: '1-0-1', instruction: 'Before meals' }],
+    ['Tab Amaryl 1', 'Glimepiride 1mg', { instruction: 'Before breakfast' }],
+    ['Tab Amaryl 2', 'Glimepiride 2mg', { instruction: 'Before breakfast' }],
+    ['Tab Galvus Met 50/500', 'Vildagliptin 50mg + Metformin 500mg', { dosage: '1-0-1' }],
+    ['Tab Janumet 50/500', 'Sitagliptin 50mg + Metformin 500mg', { dosage: '1-0-1' }],
+    ['Tab Januvia 100', 'Sitagliptin 100mg'],
+    ['Tab Jalra-M 50/500', 'Vildagliptin 50mg + Metformin 500mg', { dosage: '1-0-1' }],
+    ['Tab Teneligliptin 20mg', 'Teneligliptin 20mg'],
+    ['Tab Forxiga 10', 'Dapagliflozin 10mg'],
+    ['Tab Jardiance 10', 'Empagliflozin 10mg'],
+    ['Tab Thyronorm 25', 'Levothyroxine 25mcg', { instruction: 'Empty stomach, early morning' }],
+    ['Tab Thyronorm 50', 'Levothyroxine 50mcg', { instruction: 'Empty stomach, early morning' }],
+    ['Tab Thyronorm 75', 'Levothyroxine 75mcg', { instruction: 'Empty stomach, early morning' }],
+    ['Tab Thyronorm 100', 'Levothyroxine 100mcg', { instruction: 'Empty stomach, early morning' }],
+    ['Tab Eltroxin 50', 'Levothyroxine 50mcg', { instruction: 'Empty stomach, early morning' }],
+    ['Tab Neo-Mercazole 5', 'Carbimazole 5mg', { dosage: '1-0-1' }],
+  ]),
+
+  // Vitamins, minerals, iron
+  ...group(CHRONIC, [
+    ['Tab Shelcal 500', 'Calcium carbonate 1250mg + Vitamin D3 250 IU', { dosage: '0-1-0' }],
+    ['Tab CCM', 'Calcium citrate malate + Vitamin D3', { dosage: '0-1-0' }],
+    ['Cap Uprise-D3 60K', 'Cholecalciferol 60000 IU', { dosage: 'Once a week', duration: '8 Weeks', instruction: 'With milk' }],
+    ['Sachet Calcirol 60K', 'Cholecalciferol 60000 IU', { dosage: 'Once a week', duration: '8 Weeks', instruction: 'With milk' }],
+    ['Cap Becosules', 'Vitamin B-complex + Vitamin C'],
+    ['Tab Neurobion Forte', 'Vitamin B1 + B6 + B12'],
+    ['Tab Methylcobalamin 1500mcg', 'Methylcobalamin 1500mcg'],
+    ['Tab Limcee 500', 'Vitamin C 500mg (chewable)'],
+    ['Tab Zincovit', 'Multivitamin + Zinc'],
+    ['Tab Supradyn', 'Multivitamin + Multimineral'],
+    ['Cap Evion 400', 'Vitamin E 400mg'],
+    ['Tab Livogen', 'Ferrous fumarate + Folic acid'],
+    ['Tab Orofer XT', 'Ferrous ascorbate 100mg + Folic acid 1.5mg'],
+    ['Tab Folvite 5', 'Folic acid 5mg'],
+  ]),
+
+  // Nerves, sleep, mood, vertigo, headache
+  ...group({ ...BEDTIME, duration: '15 Days' }, [
+    ['Cap Pregabalin 75mg', 'Pregabalin 75mg'],
+    ['Cap Pregabalin 75mg + Methylcobalamin 750mcg', 'Pregabalin 75mg + Methylcobalamin 750mcg'],
+    ['Tab Gabapentin 300mg', 'Gabapentin 300mg'],
+    ['Tab Tryptomer 10', 'Amitriptyline 10mg'],
+    ['Tab Rivotril 0.5', 'Clonazepam 0.5mg'],
+    ['Tab Alprax 0.25', 'Alprazolam 0.25mg'],
+    ['Tab Nexito 10', 'Escitalopram 10mg', { dosage: '1-0-0', duration: '1 Month', instruction: 'After breakfast' }],
+    ['Tab Sertraline 50mg', 'Sertraline 50mg', { dosage: '1-0-0', duration: '1 Month', instruction: 'After breakfast' }],
+    ['Tab Vertin 16', 'Betahistine 16mg', { dosage: '1-0-1', duration: '7 Days', instruction: 'After meals' }],
+    ['Tab Stugeron 25', 'Cinnarizine 25mg', { dosage: '1-0-1', duration: '5 Days', instruction: 'After meals' }],
+    ['Tab Sibelium 10', 'Flunarizine 10mg'],
+    ['Tab Suminat 50', 'Sumatriptan 50mg', { dosage: 'SOS', duration: '', instruction: 'At onset of migraine' }],
+  ]),
+
+  // Urology, women's health
+  ...group({ dosage: '1-0-1', duration: '5 Days', instruction: 'After meals' }, [
+    ['Cap Urimax 0.4', 'Tamsulosin 0.4mg', { ...BEDTIME, duration: '1 Month' }],
+    ['Syr Cital', 'Disodium hydrogen citrate 1.4g/5ml', { dosage: '2 tsp TDS', instruction: 'In a glass of water' }],
+    ['Tab Pause 500', 'Tranexamic acid 500mg', { dosage: '1-1-1' }],
+    ['Tab Mefenamic acid 500mg + Tranexamic acid 500mg', 'Mefenamic acid 500mg + Tranexamic acid 500mg'],
+    ['Tab Primolut-N 5', 'Norethisterone 5mg', { dosage: '1-1-1', duration: '10 Days' }],
+    ['Tab Duphaston 10', 'Dydrogesterone 10mg', { duration: '10 Days' }],
+    ['Tab Doxinate', 'Doxylamine 10mg + Pyridoxine 10mg', BEDTIME],
+    ['Vag Tab Candid V6', 'Clotrimazole 100mg (vaginal)', { dosage: '0-0-1', duration: '6 Days', instruction: 'Insert at bedtime' }],
+  ]),
+
+  // Skin
+  ...group(LOCAL, [
+    ['Cream Candid', 'Clotrimazole 1%', { duration: '14 Days' }],
+    ['Cream Candid-B', 'Clotrimazole 1% + Beclomethasone 0.025%'],
+    ['Cream Luliconazole 1%', 'Luliconazole 1%', { dosage: '1-0-0', duration: '14 Days' }],
+    ['Oint T-Bact', 'Mupirocin 2%', { dosage: '1-1-1' }],
+    ['Cream Fucidin', 'Fusidic acid 2%', { dosage: '1-1-1' }],
+    ['Cream Betnovate-C', 'Betamethasone 0.1% + Clioquinol 3%'],
+    ['Cream Momate', 'Mometasone 0.1%', { dosage: '0-0-1' }],
+    ['Cream Permite 5%', 'Permethrin 5%', { dosage: 'Once', duration: 'Repeat after 1 week', instruction: 'Neck down, wash after 8–12 hours' }],
+    ['Lotion Calamine', 'Calamine 8% + Zinc oxide', { dosage: '1-1-1' }],
+    ['Gel Adaferin 0.1%', 'Adapalene 0.1%', { dosage: '0-0-1', duration: '1 Month', instruction: 'Thin layer at night' }],
+    ['Gel Clindac A', 'Clindamycin 1%', { duration: '1 Month' }],
+    ['Gel Persol 2.5%', 'Benzoyl peroxide 2.5%', { dosage: '0-0-1', duration: '1 Month' }],
+    ['Shampoo Ketoconazole 2%', 'Ketoconazole 2%', { dosage: 'Twice a week', duration: '1 Month', instruction: 'Leave on 5 minutes, then rinse' }],
+    ['Solution Mintop 5%', 'Minoxidil 5%', { dosage: '1 ml BD', duration: '3 Months', instruction: 'On dry scalp' }],
+    ['Cap Isotretinoin 20mg', 'Isotretinoin 20mg', { dosage: '0-1-0', duration: '1 Month', instruction: 'After meals' }],
+  ]),
+
+  // Eye, ear, mouth
+  ...group({ dosage: '1 drop QID', duration: '7 Days', instruction: 'Affected eye' }, [
+    ['Eye drops Moxifloxacin 0.5%', 'Moxifloxacin 0.5%'],
+    ['Eye/Ear drops Ciplox', 'Ciprofloxacin 0.3%'],
+    ['Eye drops Tobramycin 0.3%', 'Tobramycin 0.3%'],
+    ['Eye drops Refresh Tears', 'Carboxymethylcellulose 0.5%', { duration: '1 Month', instruction: 'Both eyes' }],
+    ['Eye drops Olopatadine 0.1%', 'Olopatadine 0.1%', { dosage: '1 drop BD', instruction: 'Both eyes' }],
+    ['Ear drops Soliwax', 'Wax softener', { dosage: '3 drops TDS', duration: '3 Days', instruction: 'Affected ear' }],
+    ['Ear drops Candid', 'Clotrimazole 1% + Lignocaine 2%', { dosage: '3 drops TDS', instruction: 'Affected ear' }],
+    ['Mouthwash Hexidine', 'Chlorhexidine 0.2%', { dosage: '10 ml BD', instruction: 'Rinse, do not swallow' }],
+    ['Gargle Betadine 2%', 'Povidone-iodine 2%', { dosage: 'TDS', duration: '5 Days', instruction: 'Gargle, do not swallow' }],
+    ['Gel Zytee RB', 'Choline salicylate + Benzalkonium', { dosage: 'TDS', duration: '5 Days', instruction: 'Apply on ulcer' }],
+  ]),
+
+  // Children
+  ...group({ dosage: '5 ml TDS', duration: '3 Days', instruction: 'After meals' }, [
+    ['Susp Calpol 250', 'Paracetamol 250mg/5ml', { dosage: '5 ml SOS', instruction: 'For fever above 100°F' }],
+    ['Drops Paracetamol 100mg/ml', 'Paracetamol 100mg/ml', { dosage: 'As per weight SOS', instruction: 'For fever above 100°F' }],
+    ['Susp Ibuprofen 100mg/5ml', 'Ibuprofen 100mg/5ml', { dosage: '5 ml SOS' }],
+    ['Susp Meftal-P', 'Mefenamic acid 100mg/5ml', { dosage: '5 ml SOS' }],
+    ['Syr Amoxicillin 250mg/5ml', 'Amoxicillin 250mg/5ml', { duration: '5 Days' }],
+    ['Syr Augmentin Duo', 'Amoxicillin 400mg + Clavulanic acid 57mg/5ml', { dosage: '5 ml BD', duration: '5 Days' }],
+    ['Syr Azithral 200', 'Azithromycin 200mg/5ml', { dosage: '5 ml OD' }],
+    ['Syr Cefixime 50mg/5ml', 'Cefixime 50mg/5ml', { dosage: '5 ml BD', duration: '5 Days' }],
+    ['Syr Ondem', 'Ondansetron 2mg/5ml', { dosage: '2.5 ml SOS', instruction: 'For vomiting' }],
+    ['Syr Zinc 20mg/5ml', 'Zinc sulfate 20mg/5ml', { dosage: '5 ml OD', duration: '14 Days' }],
+    ['Syr Cetirizine 5mg/5ml', 'Cetirizine 5mg/5ml', { dosage: '2.5 ml HS', duration: '5 Days' }],
+    ['Syr Levocetirizine 2.5mg/5ml', 'Levocetirizine 2.5mg/5ml', { dosage: '2.5 ml HS', duration: '5 Days' }],
+    ['Syr Montair LC Kid', 'Montelukast 4mg + Levocetirizine 2.5mg/5ml', { dosage: '5 ml HS', duration: '5 Days' }],
+    ['Drops Vitamin D3 400 IU', 'Cholecalciferol 400 IU/ml', { dosage: '1 ml OD', duration: '1 Month' }],
+  ]),
+
+  // Injections given in the clinic
+  ...group({ dosage: 'Stat', duration: '1 Day', instruction: 'In clinic' }, [
+    ['Inj Diclofenac 75mg', 'Diclofenac 75mg/ml IM'],
+    ['Inj Ondansetron 4mg', 'Ondansetron 4mg/2ml'],
+    ['Inj Dexamethasone 4mg', 'Dexamethasone 4mg/ml'],
+    ['Inj Pantoprazole 40mg', 'Pantoprazole 40mg IV'],
+    ['Inj Tetanus Toxoid 0.5ml', 'Tetanus toxoid IM'],
+  ]),
+];

@@ -22,6 +22,7 @@ export const recall = async (req, res) => {
 export const setStatus = async (req, res) => {
   const data = await service.setTokenStatus({
     tokenId: req.params.tokenId, to: req.body.status, reason: req.body.reason, actor: req.user,
+    outcome: req.body.outcome, outcomeNotes: req.body.outcomeNotes,
   });
   res.json({ ok: true, data });
 };

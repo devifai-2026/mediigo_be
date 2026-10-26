@@ -225,6 +225,25 @@ export const staffLogin = async ({ identifier, password, ip, userAgent }) => {
   return { requires2fa: false, ...(await mintSession(user)) };
 };
 
+/**
+ * A signed-in staff member changes their own password. The current one is
+ * required when there is one; a login created for OTP sign-in has none, and
+ * sets its first password here.
+ */
+export const changePassword = async ({ userId, currentPassword, newPassword }) => {
+  const user = await User.findById(userId).select('+passwordHash');
+  if (!user || !user.isActive) throw unauthenticated();
+  if (user.role === ROLES.PATIENT) throw forbidden('Patients sign in with a code, not a password');
+  if (user.passwordHash && !(await verifyPassword(user.passwordHash, currentPassword || ''))) {
+    throw validationError([{ path: 'currentPassword', message: 'Your current password is not correct' }]);
+  }
+  if (user.passwordHash && (await verifyPassword(user.passwordHash, newPassword))) {
+    throw validationError([{ path: 'newPassword', message: 'Pick a password different from the current one' }]);
+  }
+  await User.updateOne({ _id: user._id }, { $set: { passwordHash: await hashPassword(newPassword) } });
+  return { changed: true };
+};
+
 export const refreshSession = async ({ refreshToken }) => {
   const claims = verifyToken(refreshToken);
   if (!claims || claims.type !== 'refresh') throw unauthenticated('Invalid refresh token');
@@ -247,6 +266,11 @@ export const getMe = async (userId) => {
   delete user.passwordHash;
   // The storage key is internal; the client only needs the URL.
   if (user.photo) delete user.photo.objectPath;
+  // Whether "change password" must ask for the current one. A login made for
+  // OTP sign-in has none yet; only the yes/no ever leaves the server.
+  if (user.role !== ROLES.PATIENT) {
+    user.hasPassword = Boolean(await User.exists({ _id: userId, passwordHash: { $type: 'string' } }));
+  }
 
   /**
    * Clinic staff carry their clinic's trial state, so the portal can show how

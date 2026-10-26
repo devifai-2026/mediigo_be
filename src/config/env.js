@@ -81,6 +81,12 @@ const schema = z.object({
   // set GCS_CREDENTIALS_JSON to the key's CONTENTS so no secret is ever written
   // to that host's disk.
   GCS_BUCKET: z.string().default(''),
+  // Patient photos (prescriptions, wounds, reports). These are read only
+  // through the API, never by URL, so they belong in a bucket with NO public
+  // access. Unset falls back to GCS_BUCKET — still served only through the
+  // API, but a public bucket would leave the objects readable by anyone who
+  // learned an object path.
+  GCS_PRIVATE_BUCKET: z.string().default(''),
   GCS_PROJECT_ID: z.string().default(''),
   GCS_CREDENTIALS_JSON: z.string().default(''),
 

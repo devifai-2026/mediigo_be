@@ -71,3 +71,8 @@ export const me = async (req, res) => {
   const user = await service.getMe(req.user.id);
   res.json({ ok: true, data: user });
 };
+
+export const changePassword = async (req, res) => {
+  const data = await service.changePassword({ userId: req.user.id, ...req.body });
+  res.json({ ok: true, data });
+};

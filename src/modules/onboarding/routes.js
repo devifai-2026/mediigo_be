@@ -14,6 +14,13 @@ import { ROLES } from '../../config/constants.js';
 
 export const onboardingRoutes = Router();
 
+// How the clinic's logins will sign in. The password is the one the agent
+// agreed with the clinic; every login gets it and can change it afterwards.
+const credentials = z.object({
+  method: z.enum(['PASSWORD', 'OTP']),
+  password: z.string().min(8, 'Password must be at least 8 characters').max(72).optional(),
+}).optional();
+
 const createSchema = {
   body: z.object({
     kind: z.enum(['HOSPITAL', 'DOCTOR']),
@@ -21,8 +28,10 @@ const createSchema = {
     payload: z.record(z.any()),
     documents: z.array(z.object({ kind: z.string(), url: z.string() })).optional(),
     leadId: z.string().regex(/^[a-f0-9]{24}$/i).optional(),
+    credentials,
   }),
 };
+const updateSchema = { body: z.object({ credentials }).passthrough() };
 
 const phone = z.string().trim().regex(/^\d{10}$/, 'Enter a 10-digit mobile number').optional().or(z.literal(''));
 const when = z.coerce.date().optional().nullable();
@@ -99,6 +108,7 @@ onboardingRoutes.post(
 onboardingRoutes.patch(
   '/submissions/:id',
   requireRole(ROLES.FIELD_AGENT, ROLES.EXEC_ADMIN, ROLES.SUPER_ADMIN),
+  validate(updateSchema),
   asyncHandler(async (req, res) => res.json({ ok: true, data: await service.update({ id: req.params.id, body: req.body, actor: req.user }) })),
 );
 onboardingRoutes.post(

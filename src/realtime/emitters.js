@@ -1,5 +1,5 @@
 import { SOCKET_EVENTS } from '../config/constants.js';
-import { chamberRoom, chamberPublicRoom, hospitalRoom, districtRoom, patientRoom, PLATFORM_ROOM } from './rooms.js';
+import { chamberRoom, chamberPublicRoom, hospitalRoom, districtRoom, patientRoom, pharmacyRoom, PLATFORM_ROOM } from './rooms.js';
 import { buildQueueSnapshot } from '../services/queueSnapshot.js';
 import { logger } from '../lib/logger.js';
 import { randomUUID } from '../lib/crypto.js';
@@ -170,5 +170,19 @@ export const emitTransactionRecorded = ({ transaction, tokenNumber }) => {
     tender: transaction.tender,
     receiptNumber: transaction.receiptNumber,
     collectedBy: String(transaction.collectedBy),
+  });
+};
+
+/**
+ * A prescription reaching the clinic pharmacy, or its dispensing changing.
+ * The pharmacy gets the whole pad; the prescribing doctor gets the update so
+ * their EMR shows it was dispensed.
+ */
+export const emitPharmacyRx = (rx, { isNew = false } = {}) => {
+  const payload = { prescription: rx };
+  const event = isNew ? SOCKET_EVENTS.PHARMACY_RX_NEW : SOCKET_EVENTS.PHARMACY_RX_UPDATED;
+  safeEmit(pharmacyRoom(String(rx.hospitalId)), event, payload);
+  safeEmit(chamberRoom(String(rx.doctorId)), SOCKET_EVENTS.PHARMACY_RX_UPDATED, {
+    prescriptionId: String(rx._id), tokenId: String(rx.tokenId), pharmacy: rx.pharmacy,
   });
 };

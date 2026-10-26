@@ -13,6 +13,7 @@ import { superadminRoutes } from './modules/superadmin/routes.js';
 import { ticketRoutes } from './modules/tickets/routes.js';
 import { reviewRoutes } from './modules/reviews/routes.js';
 import { prescriptionRoutes } from './modules/prescriptions/routes.js';
+import { pharmacyRoutes } from './modules/pharmacy/routes.js';
 import { enquiryRoutes } from './modules/enquiries/routes.js';
 
 // Single mount point for every route in the app.
@@ -32,6 +33,7 @@ export const mountRoutes = (app) => {
   app.use('/api/superadmin', superadminRoutes);
   app.use('/api/tickets', ticketRoutes);
   app.use('/api/prescriptions', prescriptionRoutes);
+  app.use('/api/pharmacy', pharmacyRoutes);
   // Public: the doctor landing page's enquiry form and pricing.
   app.use('/api/enquiries', enquiryRoutes);
 };
