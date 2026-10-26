@@ -3,7 +3,7 @@ import * as controller from './controller.js';
 import { asyncHandler } from '../../lib/asyncHandler.js';
 import { validate } from '../../middleware/validate.js';
 import { requireAuth } from '../../middleware/auth.js';
-import { requestOtpSchema, verifyOtpSchema, staffLoginSchema, refreshSchema } from './schema.js';
+import { requestOtpSchema, verifyOtpSchema, staffLoginSchema, refreshSchema, changePasswordSchema } from './schema.js';
 
 export const authRoutes = Router();
 
@@ -13,3 +13,4 @@ authRoutes.post('/staff/login', validate(staffLoginSchema), asyncHandler(control
 authRoutes.post('/refresh', validate(refreshSchema), asyncHandler(controller.refresh));
 authRoutes.post('/logout', asyncHandler(controller.logout));
 authRoutes.get('/me', requireAuth, asyncHandler(controller.me));
+authRoutes.post('/password', requireAuth, validate(changePasswordSchema), asyncHandler(controller.changePassword));

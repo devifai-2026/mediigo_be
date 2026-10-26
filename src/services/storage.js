@@ -104,13 +104,13 @@ export const processAvatar = async (buffer, { size = AVATAR_SIZE } = {}) => {
  * square), capped at 1600px on the long edge, re-encoded like an avatar so
  * EXIF — including the camera's GPS — never reaches a public URL.
  */
-export const processPhoto = async (buffer, { maxEdge = 1600 } = {}) => {
+export const processPhoto = async (buffer, { maxEdge = 1600, quality = 82 } = {}) => {
   try {
     const out = await sharp(buffer)
       .rotate()
       .resize(maxEdge, maxEdge, { fit: 'inside', withoutEnlargement: true })
       .flatten({ background: '#ffffff' })
-      .jpeg({ quality: 82, progressive: true, mozjpeg: true })
+      .jpeg({ quality, progressive: true, mozjpeg: true })
       .toBuffer();
     return { buffer: out, contentType: 'image/jpeg', ext: 'jpg' };
   } catch (err) {
@@ -202,6 +202,67 @@ export const deleteObject = async (objectPath) => {
     return true;
   } catch (err) {
     logger.warn({ err: err.message, objectPath }, 'could not delete old object');
+    return false;
+  }
+};
+
+// ---- private objects --------------------------------------------------------
+//
+// Patient photos. Unlike avatars these never get a public URL: they are
+// written outside the publicly served folder (or to a private bucket) and read
+// back only through an authenticated API route, which checks who is asking.
+
+const LOCAL_PRIVATE_ROOT = path.resolve('uploads-private');
+const privateBucket = () => {
+  if (!gcsClient) gcsClient = new Storage(gcsOptions());
+  return gcsClient.bucket(env.GCS_PRIVATE_BUCKET || env.GCS_BUCKET);
+};
+
+/**
+ * A photo of a document: 1600px on the long edge keeps an A4/A5 pad's small
+ * handwriting legible (about 150 dpi) at roughly half the bytes of 2400px,
+ * which matters on a clinic's mobile data. Re-encoded so EXIF never reaches
+ * storage.
+ */
+export const processDocumentPhoto = (buffer) => processPhoto(buffer, { maxEdge: 1600, quality: 78 });
+
+export const putPrivateObject = async ({ buffer, contentType, ext, prefix }) => {
+  const objectPath = `${prefix}/${randomUUID()}.${ext}`;
+  if (!useGcs()) {
+    const full = path.join(LOCAL_PRIVATE_ROOT, objectPath);
+    await fs.mkdir(path.dirname(full), { recursive: true });
+    await fs.writeFile(full, buffer);
+    return { objectPath, bytes: buffer.length };
+  }
+  await privateBucket().file(objectPath).save(buffer, {
+    contentType,
+    resumable: false,
+    metadata: { cacheControl: 'private, max-age=0, no-store', contentDisposition: 'inline' },
+  });
+  return { objectPath, bytes: buffer.length };
+};
+
+/** The bytes of a private object, or null when it is gone. */
+export const readPrivateObject = async (objectPath) => {
+  try {
+    if (!useGcs()) return await fs.readFile(path.join(LOCAL_PRIVATE_ROOT, objectPath));
+    const [buf] = await privateBucket().file(objectPath).download();
+    return buf;
+  } catch (err) {
+    logger.warn({ err: err.message, objectPath }, 'could not read private object');
+    return null;
+  }
+};
+
+/** Never throws, like deleteObject. */
+export const deletePrivateObject = async (objectPath) => {
+  if (!objectPath) return false;
+  try {
+    if (!useGcs()) await fs.unlink(path.join(LOCAL_PRIVATE_ROOT, objectPath));
+    else await privateBucket().file(objectPath).delete({ ignoreNotFound: true });
+    return true;
+  } catch (err) {
+    logger.warn({ err: err.message, objectPath }, 'could not delete private object');
     return false;
   }
 };

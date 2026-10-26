@@ -9,12 +9,18 @@ import {
   walkinSchema, paySchema, dayCloseSchema, expenseSchema, voidExpenseSchema, deskQuerySchema,
 } from './schema.js';
 import { revenueAnalytics } from './analytics.js';
-import { logExpense, voidExpense, ledger, footfall, reportDoctorId } from './desk.js';
+import { logExpense, voidExpense, ledger, footfall, reportDoctorId, assertDeskWindow } from './desk.js';
 import { validationError } from '../../lib/errors.js';
 
 export const posRoutes = Router();
 
 posRoutes.use(requireAuth, asyncHandler(requireActiveUser));
+
+// Reports the front desk may open only for recent days; see assertDeskWindow.
+const deskWindow = asyncHandler(async (req, _res, next) => {
+  await assertDeskWindow(req.user, req.query);
+  next();
+});
 
 // Doctors too: in a single-doctor clinic the doctor is often the desk. The
 // clinic scope check in the service still confines them to their own clinic.
@@ -40,6 +46,7 @@ posRoutes.get(
   '/analytics',
   requireRole(ROLES.RECEPTIONIST, ROLES.DOCTOR, ROLES.EXEC_ADMIN, ROLES.SUPER_ADMIN),
   validate(deskQuerySchema),
+  deskWindow,
   asyncHandler(async (req, res) => {
     const hospitalId = req.user.hospitalId || req.query.hospitalId;
     if (!hospitalId) throw validationError('No clinic in scope — pass hospitalId');
@@ -58,6 +65,7 @@ posRoutes.get(
   '/day-close',
   requireRole(ROLES.RECEPTIONIST, ROLES.DOCTOR, ROLES.EXEC_ADMIN, ROLES.SUPER_ADMIN),
   validate(dayCloseSchema),
+  deskWindow,
   asyncHandler(controller.dayClose),
 );
 
@@ -69,6 +77,7 @@ posRoutes.get(
   '/ledger',
   requireRole(...DESK_READ),
   validate(deskQuerySchema),
+  deskWindow,
   asyncHandler(async (req, res) => {
     res.json({ ok: true, data: await ledger({ actor: req.user, query: req.query }) });
   }),
@@ -78,6 +87,7 @@ posRoutes.get(
   '/footfall',
   requireRole(...DESK_READ),
   validate(deskQuerySchema),
+  deskWindow,
   asyncHandler(async (req, res) => {
     res.json({ ok: true, data: await footfall({ actor: req.user, query: req.query }) });
   }),

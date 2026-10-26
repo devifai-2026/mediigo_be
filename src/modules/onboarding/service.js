@@ -5,7 +5,20 @@ import { notFound, conflict, validationError } from '../../lib/errors.js';
 import { assertSubmissionScope, scopeFilter } from '../../middleware/rbac.js';
 import { emitSubmissionStatus } from '../../realtime/emitters.js';
 import { assertLeadOnboardable } from './leads.js';
+import { hashPassword } from '../auth/service.js';
 import { SUBMISSION_STATUS, ROLES } from '../../config/constants.js';
+
+/**
+ * Apply the agent's sign-in choice. The password arrives in plain text once
+ * and leaves only as a hash; leaving it out keeps the one already set, so a
+ * later edit does not have to send it again.
+ */
+const applyCredentials = async (sub, credentials) => {
+  if (!credentials) return;
+  sub.loginMethod = credentials.method;
+  if (credentials.method === 'OTP') sub.loginPasswordHash = null;
+  else if (credentials.password) sub.loginPasswordHash = await hashPassword(credentials.password);
+};
 
 export const create = async ({ body, actor }) => {
   // Onboarding a clinic from the agent's follow-up list: the lead must be
@@ -17,7 +30,7 @@ export const create = async ({ body, actor }) => {
     // A rejected clinic may be resubmitted; anything else is still in review or done.
     await assertLeadOnboardable(lead);
   }
-  const sub = await OnboardingSubmission.create({
+  const sub = new OnboardingSubmission({
     kind: body.kind,
     agentId: actor.id,
     districtId: body.districtId || actor.districtId,
@@ -26,7 +39,11 @@ export const create = async ({ body, actor }) => {
     documents: body.documents || [],
     leadId: lead?._id ?? null,
   });
-  return sub;
+  await applyCredentials(sub, body.credentials);
+  await sub.save();
+  const out = sub.toObject();
+  delete out.loginPasswordHash;
+  return out;
 };
 
 export const update = async ({ id, body, actor }) => {
@@ -38,8 +55,11 @@ export const update = async ({ id, body, actor }) => {
   }
   if (body.payload) sub.payload = { ...sub.payload, ...body.payload };
   if (body.documents) sub.documents = body.documents;
+  await applyCredentials(sub, body.credentials);
   await sub.save();
-  return sub.toObject();
+  const out = sub.toObject();
+  delete out.loginPasswordHash;
+  return out;
 };
 
 /** Submit for review. Geocoding happens here so the reviewer sees a real pin. */

@@ -10,6 +10,15 @@ const submissionSchema = new mongoose.Schema(
     status: { type: String, enum: Object.values(SUBMISSION_STATUS), default: SUBMISSION_STATUS.DRAFT },
 
     payload: { type: mongoose.Schema.Types.Mixed, required: true },
+
+    /**
+     * How the logins approval creates will sign in. PASSWORD uses the one the
+     * agent set with the clinic, stored only as a hash (never in the payload,
+     * which agents and reviewers can read) and cleared once approval has used
+     * it. OTP creates the logins with no password at all.
+     */
+    loginMethod: { type: String, enum: ['PASSWORD', 'OTP'], default: 'PASSWORD' },
+    loginPasswordHash: { type: String, default: null, select: false },
     documents: [{ kind: String, url: String, uploadedAt: { type: Date, default: Date.now } }],
     // Resolved at submit time. Approval refuses without it — a hospital with no
     // coordinates is invisible to nearby search, so activating one is pointless.

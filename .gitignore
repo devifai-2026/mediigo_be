@@ -10,3 +10,6 @@ gcs-key.json
 
 # Local file uploads (dev storage driver) — user content, never committed.
 uploads/
+
+# Patient photos stored locally in development. Medical records: never commit.
+uploads-private/

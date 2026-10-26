@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import multer from 'multer';
 import { asyncHandler } from '../../lib/asyncHandler.js';
 import { validate } from '../../middleware/validate.js';
 import { requireAuth, requireActiveUser } from '../../middleware/auth.js';
@@ -7,6 +8,7 @@ import { ROLES } from '../../config/constants.js';
 import { createSchema, listSchema, lookupSchema, suggestSchema } from './schema.js';
 import { createPrescription, listPrescriptions, getPrescription, lookupByPhone, sendToPharmacy, myPrescriptions } from './service.js';
 import { suggestMedicines, prescribingPatterns } from './assist.js';
+import { addPhoto, fileOf, removePhoto } from './photos.js';
 
 export const prescriptionRoutes = Router();
 
@@ -67,6 +69,36 @@ prescriptionRoutes.get(
   validate(lookupSchema),
   asyncHandler(async (req, res) => {
     res.json({ ok: true, data: await lookupByPhone({ query: req.query, actor: req.user }) });
+  }),
+);
+
+// Photos on a visit: paper prescriptions and health pictures. The doctor and
+// the front desk both add them; reading follows the prescriptions' scope.
+// Memory storage: sharp re-encodes at once, nothing raw touches disk.
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024, files: 1 } });
+prescriptionRoutes.post(
+  '/photos',
+  requireRole(ROLES.DOCTOR, ROLES.RECEPTIONIST, ROLES.SUPER_ADMIN),
+  upload.single('photo'),
+  asyncHandler(async (req, res) => {
+    res.status(201).json({ ok: true, data: await addPhoto({ file: req.file, body: req.body, actor: req.user }) });
+  }),
+);
+prescriptionRoutes.get(
+  '/photos/:id/file',
+  requireRole(ROLES.DOCTOR, ROLES.RECEPTIONIST, ROLES.SUPER_ADMIN),
+  asyncHandler(async (req, res) => {
+    const { buffer, contentType } = await fileOf({ id: req.params.id, actor: req.user });
+    // A medical record: never cached by a shared proxy or kept by the browser.
+    res.set({ 'Content-Type': contentType, 'Cache-Control': 'private, no-store' });
+    res.send(buffer);
+  }),
+);
+prescriptionRoutes.delete(
+  '/photos/:id',
+  requireRole(ROLES.DOCTOR, ROLES.RECEPTIONIST, ROLES.SUPER_ADMIN),
+  asyncHandler(async (req, res) => {
+    res.json({ ok: true, data: await removePhoto({ id: req.params.id, actor: req.user }) });
   }),
 );
 

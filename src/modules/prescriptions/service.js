@@ -1,4 +1,4 @@
-import { Prescription, OPDToken, Doctor, Hospital, User } from '../../models/index.js';
+import { Prescription, OPDToken, Doctor, Hospital, User, PatientPhoto } from '../../models/index.js';
 import { forbidden, notFound, conflict } from '../../lib/errors.js';
 import { assertHospitalScope } from '../../middleware/rbac.js';
 import { writeAuditLog } from '../../lib/auditLog.js';
@@ -139,6 +139,18 @@ export const recordScope = (actor) => {
   return { hospitalId: actor.hospitalId };
 };
 
+/** What the EMR shows for a visit photo; the image itself is a separate request. */
+export const photoRow = (p) => ({
+  id: String(p._id),
+  tokenId: String(p.tokenId),
+  kind: p.kind,
+  caption: p.caption,
+  uploadedBy: p.uploadedBy ? String(p.uploadedBy) : null,
+  uploadedByName: p.uploadedByName || '',
+  uploadedByRole: p.uploadedByRole || '',
+  createdAt: p.createdAt,
+});
+
 const inScope = (actor, rec) => Object.entries(recordScope(actor)).every(([k, v]) => sameId(rec[k], v));
 
 /** Prescriptions the caller may read; see recordScope. */
@@ -179,9 +191,11 @@ export const lookupByPhone = async ({ query, actor }) => {
       .sort({ date: -1, createdAt: -1 }).limit(limit).lean(),
     OPDToken.countDocuments(filter),
   ]);
-  const [rx, doctors] = await Promise.all([
-    Prescription.find({ tokenId: { $in: tokens.map((t) => t._id) } }).sort({ createdAt: -1 }).lean(),
+  const tokenIds = tokens.map((t) => t._id);
+  const [rx, doctors, photos] = await Promise.all([
+    Prescription.find({ tokenId: { $in: tokenIds } }).sort({ createdAt: -1 }).lean(),
     Doctor.find({ _id: { $in: [...new Set(tokens.map((t) => String(t.doctorId)))] } }).select('name specialty').lean(),
+    PatientPhoto.find({ tokenId: { $in: tokenIds } }).select('-objectPath').sort({ createdAt: 1 }).lean(),
   ]);
   const docById = new Map(doctors.map((d) => [String(d._id), d]));
   return {
@@ -200,6 +214,7 @@ export const lookupByPhone = async ({ query, actor }) => {
       symptoms: symptomsOf(t),
       doctorName: docById.get(String(t.doctorId))?.name || '',
       prescriptions: rx.filter((r) => sameId(r.tokenId, t._id)),
+      photos: photos.filter((p) => sameId(p.tokenId, t._id)).map(photoRow),
     })),
   };
 };

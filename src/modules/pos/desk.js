@@ -1,7 +1,8 @@
 import mongoose from 'mongoose';
 import {
-  Transaction, OPDToken, Hospital, Doctor, PettyExpense, Prescription, User,
+  Transaction, OPDToken, Hospital, Doctor, PettyExpense, Prescription, PatientPhoto, User,
 } from '../../models/index.js';
+import { photoRow } from '../prescriptions/service.js';
 import { clinicDate } from '../../lib/dates.js';
 import { notFound, conflict, validationError } from '../../lib/errors.js';
 import { assertHospitalScope } from '../../middleware/rbac.js';
@@ -77,6 +78,31 @@ export const resolveRange = (hospital, { period, date, from, to } = {}) => {
     throw validationError([{ path: 'to', message: `Pick a range of up to ${MAX_RANGE_DAYS} days` }]);
   }
   return { from: lo, to: hi, days, today };
+};
+
+/**
+ * The front desk sees recent days only: today, yesterday and this week
+ * (Monday onward). Enough to run the drawer and answer "how was the week",
+ * without the clinic's long-run revenue. Doctors and admins are unaffected.
+ */
+export const deskEarliestDate = (today) => {
+  const dow = new Date(`${today}T00:00:00Z`).getUTCDay(); // 0 = Sunday
+  const monday = shiftDays(today, -((dow + 6) % 7));
+  const yesterday = shiftDays(today, -1);
+  return monday < yesterday ? monday : yesterday;
+};
+
+export const assertDeskWindow = async (actor, query = {}) => {
+  if (actor.role !== ROLES.RECEPTIONIST) return;
+  const hospital = await Hospital.findById(actor.hospitalId).select('timezone').lean();
+  const today = clinicDate(hospital?.timezone);
+  const earliest = deskEarliestDate(today);
+  // The window's first day, worked out the way resolveRange does.
+  const lo = query.from || query.to || query.date
+    || shiftDays(today, -((PERIOD_SPAN[query.period] || 1) - 1));
+  if (lo < earliest) {
+    throw validationError([{ path: 'from', message: 'The front desk can see today, yesterday and this week only' }]);
+  }
 };
 
 /** Kept for callers that only know a period and an end date. */
@@ -230,17 +256,27 @@ export const footfall = async ({ actor, query }) => {
   ]);
   // Visits are the clinic's footfall; what was prescribed is the treating
   // doctor's record. A clinic-admin doctor sees every visit, but only their
-  // own patients' prescriptions.
-  const rx = await Prescription.find({
+  // own patients' prescriptions. Visit photos follow the same rule.
+  const recordFilter = {
     tokenId: { $in: tokens.map((t) => t._id) },
     ...(actor.role === ROLES.DOCTOR ? { doctorId: actor.doctorId } : {}),
-  }).sort({ createdAt: -1 }).lean();
+  };
+  const [rx, photos] = await Promise.all([
+    Prescription.find(recordFilter).sort({ createdAt: -1 }).lean(),
+    PatientPhoto.find(recordFilter).select('-objectPath').sort({ createdAt: 1 }).lean(),
+  ]);
   const rxByToken = new Map();
   for (const r of rx) {
     const k = String(r.tokenId);
     if (!rxByToken.has(k)) rxByToken.set(k, []);
     // The whole record, so the register can show the prescription in place.
     rxByToken.get(k).push({ ...r, id: String(r._id), at: r.createdAt });
+  }
+  const photosByToken = new Map();
+  for (const p of photos) {
+    const k = String(p.tokenId);
+    if (!photosByToken.has(k)) photosByToken.set(k, []);
+    photosByToken.get(k).push(photoRow(p));
   }
   const docById = new Map(doctors.map((d) => [String(d._id), d]));
 
@@ -268,6 +304,7 @@ export const footfall = async ({ actor, query }) => {
       doctorId: String(t.doctorId),
       doctorName: docById.get(String(t.doctorId))?.name || '',
       prescriptions: rxByToken.get(String(t._id)) || [],
+      photos: photosByToken.get(String(t._id)) || [],
     })),
   };
 };

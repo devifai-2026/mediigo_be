@@ -26,6 +26,13 @@ export const staffLoginSchema = {
   }),
 };
 
+export const changePasswordSchema = {
+  body: z.object({
+    currentPassword: z.string().max(72).optional(),
+    newPassword: z.string().min(8, 'Password must be at least 8 characters').max(72),
+  }),
+};
+
 export const refreshSchema = {
   body: z.object({ refreshToken: z.string().optional() }),
 };
