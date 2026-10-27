@@ -16,8 +16,9 @@ export const ROLES = {
   SUPER_ADMIN: 'SUPER_ADMIN',
 };
 
-// Roles that authenticate with a password. Patients are OTP-only and are never
-// given a passwordHash.
+// Every role that is clinic or platform staff, as opposed to a patient. Named
+// for the password login it used to gate — any role may hold a password now,
+// so this is a staff/patient distinction and nothing more.
 export const STAFF_ROLES = [
   ROLES.DOCTOR,
   ROLES.RECEPTIONIST,

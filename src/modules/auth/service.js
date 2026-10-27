@@ -191,21 +191,35 @@ export const verifyOtp = async ({ phone, purpose = OTP_PURPOSE.PATIENT_LOGIN, ot
 };
 
 /**
- * Staff password login. When the Super Admin has enabled 2FA for this role, the
- * password check succeeds but no session is minted — an OTP is issued and the
- * caller must complete verifyOtp with purpose STAFF_2FA.
+ * Password login, for every role including patients.
+ *
+ * The name and the /auth/staff/login path are historical: this served staff
+ * only until patients were allowed to hold a password. Renaming the route
+ * would break the deployed frontend, so the path stays and the behaviour is
+ * described here instead.
+ *
+ * A patient who has never set a password simply fails the password check —
+ * there is no separate "patients cannot do this" branch, because that would
+ * tell a caller which numbers belong to patients.
+ *
+ * When the Super Admin has enabled 2FA for this role, the password check
+ * succeeds but no session is minted — an OTP is issued and the caller must
+ * complete verifyOtp with purpose STAFF_2FA.
  */
-export const staffLogin = async ({ identifier, password, ip, userAgent }) => {
+export const passwordLogin = async ({ identifier, password, ip, userAgent }) => {
   const digits = last10Digits(identifier);
   const query = isValidIndianMobile(digits)
     ? { phone: digits }
     : { email: String(identifier || '').toLowerCase().trim() };
 
   const user = await User.findOne(query).select('+passwordHash');
-  // Same message for unknown user and wrong password — distinguishing them tells
-  // an attacker which phone numbers are registered staff.
+  // One message for every failure — unknown number, no password set, wrong
+  // password. Distinguishing them tells an attacker which numbers are
+  // registered, and which of those have never set a password.
   const invalid = unauthenticated('Invalid credentials');
-  if (!user || user.role === ROLES.PATIENT) throw invalid;
+  if (!user) throw invalid;
+  // verifyPassword returns false for a null hash, so a patient who has never
+  // set one fails closed here rather than needing a role check.
   if (!(await verifyPassword(user.passwordHash, password))) throw invalid;
   if (!user.isActive) throw forbidden('This account has been deactivated');
 
@@ -216,7 +230,14 @@ export const staffLogin = async ({ identifier, password, ip, userAgent }) => {
     await requestOtp({ phone: user.phone, purpose: OTP_PURPOSE.STAFF_2FA, ip, userAgent });
     return {
       requires2fa: true,
+      // Masked, for showing the person where the code went.
       phone: maskPhone(user.phone),
+      // The real number, because the next call must verify against the
+      // address the OTP was written under. Signing in by email and echoing
+      // only the mask left the client with nothing to verify with — it sent
+      // the typed email, which never matches. Safe to return: the password
+      // was already correct, so this tells the caller nothing new.
+      verifyPhone: user.phone,
       purpose: OTP_PURPOSE.STAFF_2FA,
       expiresInMinutes: settings.otpTtlMinutes,
     };
@@ -225,15 +246,19 @@ export const staffLogin = async ({ identifier, password, ip, userAgent }) => {
   return { requires2fa: false, ...(await mintSession(user)) };
 };
 
+/** Historical name. Every caller and the route path still use this. */
+export const staffLogin = passwordLogin;
+
 /**
- * A signed-in staff member changes their own password. The current one is
- * required when there is one; a login created for OTP sign-in has none, and
- * sets its first password here.
+ * Anyone signed in changes their own password.
+ *
+ * The current one is required only when there IS one: an account created for
+ * OTP sign-in — every patient, and any staff login an agent left on OTP — has
+ * none, and sets its first password here.
  */
 export const changePassword = async ({ userId, currentPassword, newPassword }) => {
   const user = await User.findById(userId).select('+passwordHash');
   if (!user || !user.isActive) throw unauthenticated();
-  if (user.role === ROLES.PATIENT) throw forbidden('Patients sign in with a code, not a password');
   if (user.passwordHash && !(await verifyPassword(user.passwordHash, currentPassword || ''))) {
     throw validationError([{ path: 'currentPassword', message: 'Your current password is not correct' }]);
   }
@@ -266,11 +291,12 @@ export const getMe = async (userId) => {
   delete user.passwordHash;
   // The storage key is internal; the client only needs the URL.
   if (user.photo) delete user.photo.objectPath;
-  // Whether "change password" must ask for the current one. A login made for
-  // OTP sign-in has none yet; only the yes/no ever leaves the server.
-  if (user.role !== ROLES.PATIENT) {
-    user.hasPassword = Boolean(await User.exists({ _id: userId, passwordHash: { $type: 'string' } }));
-  }
+  // Whether "change password" must ask for the current one. An account made
+  // for OTP sign-in has none yet — every patient, and any staff login left on
+  // OTP at onboarding. Computed for every role: a patient may now set one, and
+  // without this the UI would demand a current password they never had. Only
+  // the yes/no ever leaves the server.
+  user.hasPassword = Boolean(await User.exists({ _id: userId, passwordHash: { $type: 'string' } }));
 
   /**
    * Clinic staff carry their clinic's trial state, so the portal can show how

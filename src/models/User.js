@@ -54,7 +54,9 @@ const userSchema = new mongoose.Schema(
       updatedAt: { type: Date, default: null },
     },
 
-    // Staff only. Patients are OTP-only and never receive one.
+    // Null until someone sets one. Any role may hold a password now; an
+    // account created for OTP sign-in simply has none until its owner sets
+    // one from their account settings.
     passwordHash: { type: String, default: null, select: false },
     // Per-user override of the role-level 2FA policy set by Super Admin.
     twoFactorEnabled: { type: Boolean, default: false },
