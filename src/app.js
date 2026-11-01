@@ -66,6 +66,15 @@ export const createApp = () => {
       credentials: true,
     }),
   );
+  // API answers are live data, never something to revalidate from a cache.
+  // With ETags on, browsers sent If-None-Match and got 304s that some of them
+  // (and Hostinger's edge) failed to turn back into the cached body — the
+  // onboarding specialty list then arrived as a failed request every time.
+  app.set('etag', false);
+  app.use('/api', (_req, res, next) => {
+    res.set('Cache-Control', 'no-store');
+    next();
+  });
   app.use(express.json({ limit: '1mb' }));
   app.use(express.urlencoded({ extended: true }));
   app.use(cookieParser());
