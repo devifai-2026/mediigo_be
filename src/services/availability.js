@@ -11,7 +11,7 @@
  */
 import { Doctor } from '../models/Doctor.js';
 import { Counter } from '../models/Counter.js';
-import { tokenCounterId } from '../lib/counters.js';
+import { tokenCounterId, nextSequence } from '../lib/counters.js';
 import { OPDToken } from '../models/OPDToken.js';
 import { clinicDate, tzOffsetMinutes } from '../lib/dates.js';
 import { BOOKING_HORIZON_DAYS, SHIFT, TOKEN_STATUS } from '../config/constants.js';
@@ -286,32 +286,34 @@ export const sittingSlots = async ({ doctor, timezone, date, shift, now = new Da
   const start = toMinutes(sitting.startTime);
   const end = toMinutes(sitting.endTime);
 
-  const tokens = await OPDToken.find({ doctorId: doctor._id, date, shift })
-    .select('tokenNumber status')
+  // Numbers are one series for the whole day: this sitting owns a block of
+  // it (see sittingBlock), and a number is taken whichever sitting used it.
+  const { base } = sittingBlock(doctor, date, shift);
+  const dayTokens = await OPDToken.find({ doctorId: doctor._id, date })
+    .select('tokenNumber status shift')
     .lean();
-  const taken = new Set(tokens.map((t) => t.tokenNumber));
-  const maxTaken = tokens.reduce((m, t) => Math.max(m, t.tokenNumber), 0);
+  const taken = new Set(dayTokens.map((t) => t.tokenNumber));
+  const tokens = dayTokens.filter((t) => t.shift === shift);
+  const maxTaken = tokens.reduce((m, t) => Math.max(m, t.tokenNumber), base - 1);
   // The queue has reached the highest number already called or seen.
   const reached = tokens
     .filter((t) => t.status !== TOKEN_STATUS.WAITING && t.status !== TOKEN_STATUS.CANCELLED)
-    .reduce((m, t) => Math.max(m, t.tokenNumber), 0);
+    .reduce((m, t) => Math.max(m, t.tokenNumber), base - 1);
 
   const fits = Math.max(1, Math.floor((end - start) / avg));
   // Without a cap the sitting never refuses a booking, so there is always one
   // more number after the last one taken.
-  const capacity = sitting.maxTokens ?? Math.max(fits, maxTaken + 1);
+  const capacity = sitting.maxTokens ?? Math.max(fits, maxTaken - base + 2);
 
   const today = clinicDate(timezone, now);
   const nowMins = date === today ? minutesNow(timezone, now) : -1;
   const started = date === today && nowMins >= start;
 
-  // The number the desk would hand out next: the sitting's own counter, past
-  // anything already taken. Numbers are one series for walk-ins and app
-  // bookings alike — offering slots by clock time instead (#39 because 11 PM
-  // is #39's estimated slot) broke that series right after the desk issued #1
-  // and #2.
+  // The number the desk would hand out next: this sitting's counter within
+  // its block, past anything taken — the same rule allocateTokenNumber uses,
+  // so the app and the desk never number a sitting differently.
   const counter = await Counter.findById(tokenCounterId(doctor._id, date, shift)).lean();
-  let next = Math.max(counter?.seq ?? 0, reached) + 1;
+  let next = Math.max(base + (counter?.seq ?? 0), reached + 1);
   while (taken.has(next)) next += 1;
 
   const active = new Set(tokens
@@ -319,8 +321,9 @@ export const sittingSlots = async ({ doctor, timezone, date, shift, now = new Da
     .map((t) => t.tokenNumber));
 
   let ahead = 0; // people (booked, or free numbers someone may take) before this number
-  const slots = Array.from({ length: Math.max(capacity, next) }, (_, i) => {
-    const number = i + 1;
+  const length = Math.max(capacity, next - base + 1);
+  const slots = Array.from({ length }, (_, i) => {
+    const number = base + i;
     let status = 'free';
     if (taken.has(number)) status = 'taken';
     // Below the next number and never taken: the queue has moved past it.
@@ -342,6 +345,9 @@ export const sittingSlots = async ({ doctor, timezone, date, shift, now = new Da
     capacity,
     capped: sitting.maxTokens != null,
     slots,
+    // The next number in the series, whatever the clock: what the desk issues
+    // to a patient standing there, even when online booking is full.
+    next,
     // What the patient gets without choosing: the next number in the series.
     suggested: slots.find((s) => s.status === 'free' && s.number >= next)?.number ?? null,
   };
@@ -361,3 +367,43 @@ export const currentSitting = (doctor, date, timezone, now = new Date()) => {
     ?? sittings.find((s) => mins < toMinutes(s.startTime))
     ?? sittings[sittings.length - 1];
 };
+
+/**
+ * Token numbers run in ONE series per doctor per day: each sitting owns a
+ * block of numbers in the day's order — morning #1–#24, evening from #25 —
+ * so no two patients that day share a number and later sittings never get
+ * lower numbers. A block is the sitting's cap, or as many consultations as
+ * fit in it. Without sittings the series simply starts at 1.
+ */
+export const sittingBlock = (doctor, date, shift) => {
+  if (!shift) return { base: 1, size: null };
+  const avg = doctor.avgConsultMinutes || env.MINUTES_PER_CONSULT;
+  let base = 1;
+  for (const s of shiftsOn(doctor, date)) {
+    const size = s.maxTokens ?? Math.max(1, Math.floor((toMinutes(s.endTime) - toMinutes(s.startTime)) / avg));
+    if (s.shift === shift) return { base, size };
+    base += size;
+  }
+  return { base, size: null };
+};
+
+/**
+ * The next token number for a sitting: its block's start plus the sitting's
+ * own counter, past any number already used that day by anyone (a sitting
+ * that overflowed its block, or a patient who picked a later number). Run
+ * inside the allocating transaction — the counter serializes concurrent
+ * bookings, which is what makes the day-wide check safe.
+ */
+export const allocateTokenNumber = async ({ doctor, date, shift, session, expiresAt }) => {
+  const { base } = sittingBlock(doctor, date, shift);
+  for (;;) {
+    // eslint-disable-next-line no-await-in-loop
+    const seq = await nextSequence(tokenCounterId(doctor._id, date, shift), session, { expiresAt });
+    const n = base + seq - 1;
+    // eslint-disable-next-line no-await-in-loop
+    if (!(await OPDToken.exists({ doctorId: doctor._id, date, tokenNumber: n }).session(session ?? null))) return n;
+  }
+};
+
+/** Minutes since midnight now, in the clinic's timezone. */
+export const todayMinutes = (timezone, now = new Date()) => minutesNow(timezone, now);

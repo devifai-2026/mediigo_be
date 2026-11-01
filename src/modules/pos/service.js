@@ -1,9 +1,9 @@
 import mongoose from 'mongoose';
-import { User, Hospital, Doctor, OPDToken, Transaction } from '../../models/index.js';
+import { User, Hospital, Doctor, OPDToken, Transaction, Counter } from '../../models/index.js';
 import { nextSequence, tokenCounterId, receiptCounterId, formatReceipt } from '../../lib/counters.js';
 import { paise, tenderTotalPaise } from '../../lib/money.js';
 import { clinicDate, financialYear, endOfClinicDay, jitterDelay, sleep } from '../../lib/dates.js';
-import { currentSitting } from '../../services/availability.js';
+import { currentSitting, allocateTokenNumber, shiftsOn, toMinutes, sittingSlots, todayMinutes } from '../../services/availability.js';
 import { assertNoOpenToken } from '../queue/service.js';
 import { last10Digits } from '../../lib/phone.js';
 import { conflict, validationError, notFound, isDuplicateKey } from '../../lib/errors.js';
@@ -155,18 +155,22 @@ export const createWalkin = async ({ body, actor, ip, userAgent }) => {
           // with the app's per-shift one on the unique index, and every retry
           // got the same rolled-back number. A WriteConflict is transient and
           // retried by withTransaction itself.
-          const sitting = currentSitting(live, date, hospital.timezone);
-          const shift = sitting?.shift ?? null;
-          const counter = () => nextSequence(tokenCounterId(live._id, date, shift), session, {
-            expiresAt: endOfClinicDay(date, hospital.timezone),
-          });
-          let tokenNumber = await counter();
-          // Patients may have picked numbers ahead of the counter online.
-          // eslint-disable-next-line no-await-in-loop
-          while (await OPDToken.exists({ doctorId: live._id, date, shift: shift ?? SHIFT.MORNING, tokenNumber }).session(session)) {
-            // eslint-disable-next-line no-await-in-loop
-            tokenNumber = await counter();
+          // The sitting the desk chose, else the one under way. A chosen one
+          // must exist today and not be over.
+          let sitting = currentSitting(live, date, hospital.timezone);
+          if (body.shift) {
+            const chosen = shiftsOn(live, date).find((x) => x.shift === body.shift);
+            if (!chosen) throw validationError([{ path: 'shift', message: 'The doctor has no such sitting today' }]);
+            if (todayMinutes(hospital.timezone) >= toMinutes(chosen.endTime)) {
+              throw conflict(`The ${body.shift.toLowerCase()} sitting has ended for today`);
+            }
+            sitting = chosen;
           }
+          const shift = sitting?.shift ?? null;
+          // One series per day: the sitting's block, unique across the day.
+          const tokenNumber = await allocateTokenNumber({
+            doctor: live, date, shift, session, expiresAt: endOfClinicDay(date, hospital.timezone),
+          });
 
           // (4) Receipt sequence: per hospital, per financial year.
           const receiptSeq = await nextSequence(receiptCounterId(hospital._id, fy), session);
@@ -436,4 +440,40 @@ export const dayClose = async ({ hospitalId, date, actor, doctorId = null }) => 
     pettyCash: petty,
     cashInHand: totals.cash - petty.total,
   };
+};
+
+/**
+ * Today's sittings for one doctor, for the walk-in form: each one's hours,
+ * whether it is over, and the token number a walk-in would get in it now.
+ * A doctor with no sittings has one arrival-order queue (shift: null).
+ */
+export const walkinSittings = async ({ doctorId, actor }) => {
+  const { doctor, hospital } = await preflight({ doctorId }, actor);
+  const date = clinicDate(hospital.timezone);
+  const nowMins = todayMinutes(hospital.timezone);
+  const current = currentSitting(doctor, date, hospital.timezone);
+  const sittings = shiftsOn(doctor, date);
+  if (!sittings.length) {
+    const taken = new Set((await OPDToken.find({ doctorId: doctor._id, date }).select('tokenNumber').lean()).map((t) => t.tokenNumber));
+    const counter = await Counter.findById(tokenCounterId(doctor._id, date, null)).lean();
+    let next = (counter?.seq ?? 0) + 1;
+    while (taken.has(next)) next += 1;
+    return { date, sittings: [{ shift: null, startTime: null, endTime: null, ended: false, current: true, nextToken: next }] };
+  }
+  const out = [];
+  for (const s of sittings) {
+    // eslint-disable-next-line no-await-in-loop
+    const grid = await sittingSlots({ doctor, timezone: hospital.timezone, date, shift: s.shift });
+    out.push({
+      shift: s.shift,
+      startTime: s.startTime,
+      endTime: s.endTime,
+      ended: nowMins >= toMinutes(s.endTime),
+      current: current?.shift === s.shift,
+      // The desk can register a patient at the counter even after online
+      // booking for the sitting is full, so this is the series' next number.
+      nextToken: grid?.next ?? null,
+    });
+  }
+  return { date, sittings: out };
 };

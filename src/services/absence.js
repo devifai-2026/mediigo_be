@@ -10,9 +10,8 @@ import { Doctor, Hospital, OPDToken } from '../models/index.js';
 import { conflict, notFound } from '../lib/errors.js';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { clinicDate, endOfClinicDay } from '../lib/dates.js';
-import { nextSequence, tokenCounterId } from '../lib/counters.js';
 import { TOKEN_STATUS, BOOKING_HORIZON_DAYS } from '../config/constants.js';
-import { bookableDates, shiftsOn, resolveBookableShift, doctorAvailability } from './availability.js';
+import { bookableDates, shiftsOn, resolveBookableShift, doctorAvailability, allocateTokenNumber } from './availability.js';
 import { emitQueueSnapshot } from '../realtime/emitters.js';
 import { assertTokenScope } from '../middleware/rbac.js';
 import { assertNoOpenToken } from '../modules/queue/service.js';
@@ -134,11 +133,11 @@ export const rescheduleToken = async ({ tokenId, date, shift, actor }) => {
   const session = await mongoose.startSession();
   try {
     await session.withTransaction(async () => {
-      const tokenNumber = await nextSequence(
-        tokenCounterId(doctor._id, date, resolved.shift.shift),
-        session,
-        { expiresAt: endOfClinicDay(date, hospital?.timezone) },
-      );
+      // A fresh number in the new sitting's block of the day's one series.
+      const tokenNumber = await allocateTokenNumber({
+        doctor, date, shift: resolved.shift.shift, session,
+        expiresAt: endOfClinicDay(date, hospital?.timezone),
+      });
       // Moving onto a day they already hold a token for would double-book them.
       await assertNoOpenToken({
         doctorId: doctor._id, date, patientId: token.patientId, familyMemberId: token.familyMemberId, exceptId: token._id,

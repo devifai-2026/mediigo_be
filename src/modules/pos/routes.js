@@ -10,6 +10,8 @@ import {
   walkinSchema, paySchema, dayCloseSchema, expenseSchema, voidExpenseSchema, deskQuerySchema,
 } from './schema.js';
 import { revenueAnalytics } from './analytics.js';
+import { walkinSittings } from './service.js';
+import { z } from 'zod';
 import { logExpense, voidExpense, ledger, footfall, reportDoctorId, assertDeskWindow } from './desk.js';
 import { validationError } from '../../lib/errors.js';
 
@@ -25,6 +27,15 @@ const deskWindow = asyncHandler(async (req, _res, next) => {
 
 // Doctors too: in a single-doctor clinic the doctor is often the desk. The
 // clinic scope check in the service still confines them to their own clinic.
+// Today's sittings for the walk-in form, with the token each would get now.
+posRoutes.get(
+  '/walkin/sittings',
+  requireRole(ROLES.RECEPTIONIST, ROLES.DOCTOR, ROLES.SUPER_ADMIN),
+  validate({ query: z.object({ doctorId: z.string().regex(/^[a-f0-9]{24}$/i) }) }),
+  asyncHandler(async (req, res) => {
+    res.json({ ok: true, data: await walkinSittings({ doctorId: req.query.doctorId, actor: req.user }) });
+  }),
+);
 posRoutes.post(
   '/walkin',
   requireRole(ROLES.RECEPTIONIST, ROLES.DOCTOR, ROLES.SUPER_ADMIN),

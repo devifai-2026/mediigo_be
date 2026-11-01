@@ -1,8 +1,8 @@
 import mongoose from 'mongoose';
 import { Doctor, Hospital, OPDToken, Transaction, User } from '../../models/index.js';
-import { nextSequence, tokenCounterId } from '../../lib/counters.js';
+
 import { clinicDate, endOfClinicDay, addMinutes, jitterDelay, sleep, ageFrom } from '../../lib/dates.js';
-import { resolveBookableShift, sittingSlots } from '../../services/availability.js';
+import { resolveBookableShift, sittingSlots, allocateTokenNumber } from '../../services/availability.js';
 import { conflict, notFound, validationError, isDuplicateKey } from '../../lib/errors.js';
 import { assertDoctorScope, assertTokenScope, assertHospitalScope } from '../../middleware/rbac.js';
 import { buildQueueSnapshot } from '../../services/queueSnapshot.js';
@@ -438,28 +438,22 @@ export const allocateToken = async ({ doctor, hospital, date, shift, fields, fix
       let created;
       // eslint-disable-next-line no-await-in-loop
       await session.withTransaction(async () => {
-        const counter = () => nextSequence(tokenCounterId(doctor._id, date, shift), session, {
-          // Anchored to the token's own date, so a counter for a future sitting
-          // is not swept away before that day arrives.
-          expiresAt: endOfClinicDay(date, hospital.timezone),
-        });
         await assertNoOpenToken({
           doctorId: doctor._id, date, patientId: fields.patientId, familyMemberId: fields.familyMemberId,
         }, session);
         let tokenNumber = fixedNumber;
         if (tokenNumber == null) {
-          // Patients booking online may have picked numbers ahead of the
-          // counter. Step past those here; leaving it to the duplicate-key
-          // retry would exhaust the retries after five picked numbers in a row.
-          tokenNumber = await counter();
-          // eslint-disable-next-line no-await-in-loop
-          // A token stored without a shift defaults to MORNING (OPDToken), so
-          // that is what a shift-less sitting must be checked against —
-          // `shift: null` never matched anything and skipped no numbers.
-          while (await OPDToken.exists({ doctorId: doctor._id, date, shift: shift ?? SHIFT.MORNING, tokenNumber }).session(session)) {
-            // eslint-disable-next-line no-await-in-loop
-            tokenNumber = await counter();
-          }
+          // One series per day: the sitting's block, past anything already
+          // used that day — including numbers patients picked ahead online.
+          tokenNumber = await allocateTokenNumber({
+            doctor, date, shift, session,
+            // Anchored to the token's own date, so a counter for a future
+            // sitting is not swept away before that day arrives.
+            expiresAt: endOfClinicDay(date, hospital.timezone),
+          });
+        } else if (await OPDToken.exists({ doctorId: doctor._id, date, tokenNumber }).session(session)) {
+          // A picked number is unique across the whole day, not just its sitting.
+          throw conflict(`Token ${tokenNumber} was just taken — please pick another`, RESPONSE_CODES.BOOKING_CLOSED);
         }
         const [token] = await OPDToken.create(
           [{ ...fields, tokenNumber, date, shift: shift ?? undefined }],

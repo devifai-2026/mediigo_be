@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { VISIT_TYPE } from '../../config/constants.js';
+import { VISIT_TYPE, SHIFT } from '../../config/constants.js';
 
 const money = z.coerce.number().min(0).default(0);
 
@@ -20,6 +20,8 @@ export const walkinSchema = {
       })
       .optional(),
     visitType: z.enum(Object.values(VISIT_TYPE)).default(VISIT_TYPE.FRESH),
+    // Which of today's sittings the patient is for; omitted = the one under way.
+    shift: z.enum(Object.values(SHIFT)).optional(),
     discount: money,
     // The desk's "change consultation charge": the amount actually charged in
     // place of the listed fee. Audited with the listed fee alongside.
