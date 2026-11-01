@@ -75,9 +75,10 @@ export const addPolicy = async ({ body, actor }) => {
 export const updatePolicy = async ({ policyId, patch, actor }) => {
   const policy = await PatientPolicy.findById(policyId);
   if (!policy) throw notFound('Policy not found');
+  // A policy not yet linked to an account (captured at a camp) belongs to no
+  // patient, so no patient may edit it — only the staff who capture them.
   if (policy.patientId) assertVaultAccess(actor, policy.patientId);
-  delete patch.aadhaarNumber;
-  delete patch.aadhaarHash;
+  else if (actor.role === ROLES.PATIENT) throw forbidden('You can only edit your own policies');
   await PatientPolicy.updateOne({ _id: policy._id }, { $set: patch });
   return PatientPolicy.findById(policy._id).lean();
 };

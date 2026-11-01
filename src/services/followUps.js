@@ -83,7 +83,7 @@ const notify = async (phone, message) => {
 /** The doctor's sittings across the follow-up horizon, for the date picker. */
 export const followUpOptions = async ({ doctorId, actor }) => {
   const { doctor, hospital } = await loadDoctor(doctorId);
-  assertDoctorScope(actor, doctor);
+  await assertDoctorScope(actor, doctor);
   const days = await doctorAvailability({ doctor, timezone: hospital.timezone, days: FOLLOWUP_HORIZON_DAYS });
   const today = clinicDate(hospital.timezone);
   // A follow-up is a later visit by definition; today is not offered.
@@ -96,9 +96,9 @@ export const followUpOptions = async ({ doctorId, actor }) => {
 export const scheduleFollowUp = async ({ sourceTokenId, date, shift, note, actor }) => {
   const source = await OPDToken.findById(sourceTokenId);
   if (!source) throw notFound('Consultation not found');
-  assertTokenScope(actor, source);
+  await assertTokenScope(actor, source);
   const { doctor, hospital } = await loadDoctor(source.doctorId);
-  assertDoctorScope(actor, doctor);
+  await assertDoctorScope(actor, doctor);
 
   if (hospital.networkState !== NETWORK_STATE.ACTIVE) {
     throw conflict('This clinic is not accepting bookings', RESPONSE_CODES.HOSPITAL_NOT_ACTIVE);
@@ -187,7 +187,7 @@ export const scheduleFollowUp = async ({ sourceTokenId, date, shift, note, actor
 export const respondToFollowUp = async ({ tokenId, attending, actor }) => {
   const token = await OPDToken.findById(tokenId);
   if (!token) throw notFound('Booking not found');
-  assertTokenScope(actor, token);
+  await assertTokenScope(actor, token);
 
   const status = token.followUp?.status;
   if (!status) throw conflict('This booking is not a follow-up');
@@ -236,9 +236,9 @@ export const respondToFollowUp = async ({ tokenId, attending, actor }) => {
 export const releaseFollowUp = async ({ tokenId, reason, actor }) => {
   const token = await OPDToken.findById(tokenId);
   if (!token) throw notFound('Booking not found');
-  assertTokenScope(actor, token);
+  await assertTokenScope(actor, token);
   const doctor = await Doctor.findById(token.doctorId).lean();
-  assertDoctorScope(actor, doctor);
+  await assertDoctorScope(actor, doctor);
 
   if (token.followUp?.status !== FOLLOWUP_STATUS.PENDING || token.status !== TOKEN_STATUS.WAITING) {
     throw conflict(
@@ -271,7 +271,7 @@ export const releaseFollowUp = async ({ tokenId, reason, actor }) => {
  */
 export const listFollowUps = async ({ doctorId, actor }) => {
   const { doctor, hospital } = await loadDoctor(doctorId);
-  assertDoctorScope(actor, doctor);
+  await assertDoctorScope(actor, doctor);
   const today = clinicDate(hospital.timezone);
   const now = Date.now();
 

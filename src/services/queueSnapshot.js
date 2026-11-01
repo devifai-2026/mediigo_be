@@ -1,7 +1,8 @@
+import mongoose from 'mongoose';
 import { OPDToken } from '../models/OPDToken.js';
 import { Doctor } from '../models/Doctor.js';
 import { Transaction } from '../models/Transaction.js';
-import { TOKEN_STATUS, TOKEN_SOURCE, VISIT_TYPE } from '../config/constants.js';
+import { TOKEN_STATUS, TOKEN_SOURCE, VISIT_TYPE, SHIFT } from '../config/constants.js';
 import { maskName } from '../lib/logger.js';
 
 /**
@@ -26,6 +27,10 @@ export const buildQueueSnapshot = async (doctorId, date, { includePii = false } 
       .lean(),
   ]);
   if (!doctor) return null;
+  // The list in the order patients are called: by sitting, then by number
+  // (numbers restart each sitting) — the same order callNext uses.
+  const SHIFT_ORDER = { [SHIFT.MORNING]: 0, [SHIFT.AFTERNOON]: 1, [SHIFT.EVENING]: 2 };
+  tokens.sort((a, b) => (SHIFT_ORDER[a.shift] ?? 0) - (SHIFT_ORDER[b.shift] ?? 0) || a.tokenNumber - b.tokenNumber);
 
   // Today's cancellations, for clinic staff only: who took a patient off the
   // list and why. A waiting-room board never sees these.
@@ -36,6 +41,24 @@ export const buildQueueSnapshot = async (doctorId, date, { includePii = false } 
     .sort({ cancelledAt: -1 });
   if (includePii) cancelledQuery.populate('cancelledBy', 'name');
   const cancellations = await cancelledQuery.lean();
+
+  // The version: every status transition the day's tokens have been through,
+  // read from statusHistory — which only ever grows. The formula it replaces
+  // derived it from CURRENT statuses, so a restore (SKIPPED -> WAITING) or a
+  // recall LOWERED it and every screen discarded the update as stale; a
+  // completion did not move it at all. Counted over all of the day's tokens,
+  // including ones now off the list, plus doctor acknowledgements of
+  // cancellations, which change the snapshot without a transition.
+  const [counted] = await OPDToken.aggregate([
+    { $match: { doctorId: new mongoose.Types.ObjectId(String(doctorId)), date } },
+    {
+      $group: {
+        _id: null,
+        transitions: { $sum: { $size: { $ifNull: ['$statusHistory', []] } } },
+        acks: { $sum: { $cond: [{ $ifNull: ['$doctorAlert.acknowledgedAt', false] }, 1, 0] } },
+      },
+    },
+  ]);
 
   // What each patient paid, for the desk's roster. Staff only, and fetched
   // only then: a public display has no business knowing anyone's fee.
@@ -139,7 +162,6 @@ export const buildQueueSnapshot = async (doctorId, date, { includePii = false } 
       // On a consultation: it already has a follow-up booked.
       hasFollowUp: Boolean(t.followUpTokenId),
     })),
-    // Monotonic within a doctor-day: the number of state transitions so far.
     cancellations: (includePii ? cancellations : []).map((c) => ({
       tokenId: String(c._id),
       tokenNumber: c.tokenNumber,
@@ -153,11 +175,7 @@ export const buildQueueSnapshot = async (doctorId, date, { includePii = false } 
       needsAck: Boolean(c.doctorAlert?.pending),
       acknowledgedAt: c.doctorAlert?.acknowledgedAt ?? null,
     })),
-    // Cancelled tokens are off the list but still count, or cancelling a
-    // waiting token would LOWER the version and every client would discard
-    // the update as stale. waiting (1) → cancelled (2) → acknowledged (3).
-    version: tokens.reduce((acc, t) => acc + 1 + (t.status === TOKEN_STATUS.WAITING ? 0 : 1), 0)
-      + cancellations.reduce((acc, c) => acc + 2 + (c.doctorAlert?.acknowledgedAt ? 1 : 0), 0),
+    version: (counted?.transitions ?? 0) + (counted?.acks ?? 0),
     updatedAt: new Date().toISOString(),
   };
 };

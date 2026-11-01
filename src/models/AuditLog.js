@@ -14,6 +14,8 @@ const auditLogSchema = new mongoose.Schema(
     after: mongoose.Schema.Types.Mixed,
     ip: String,
     userAgent: String,
+    // Set when a Super Admin did this while signed in as the actor.
+    impersonatorId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   },
   { timestamps: true },
 );

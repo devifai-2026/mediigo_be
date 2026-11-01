@@ -6,7 +6,8 @@ export const nearbySchema = {
   query: z.object({
     lng: z.coerce.number().min(-180).max(180),
     lat: z.coerce.number().min(-90).max(90),
-    radiusKm: z.coerce.number().min(0.1).max(50).optional(),
+    // 'any' searches the whole network, nearest first.
+    radiusKm: z.union([z.literal('any'), z.coerce.number().min(0.1).max(50)]).optional(),
     specialty: z.string().max(60).optional(),
     search: z.string().max(80).optional(),
     limit: z.coerce.number().int().min(1).max(100).optional(),
@@ -17,7 +18,14 @@ export const suggestSchema = {
   query: z.object({
     q: z.string().max(80).optional(),
     limit: z.coerce.number().int().min(1).max(20).optional(),
+    // Where the patient is now, to bias place suggestions towards them.
+    lat: z.coerce.number().min(-90).max(90).optional(),
+    lng: z.coerce.number().min(-180).max(180).optional(),
   }),
+};
+
+export const placeResolveSchema = {
+  query: z.object({ placeId: z.string().min(5).max(300) }),
 };
 
 export const feesSchema = {

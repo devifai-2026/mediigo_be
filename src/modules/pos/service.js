@@ -3,6 +3,8 @@ import { User, Hospital, Doctor, OPDToken, Transaction } from '../../models/inde
 import { nextSequence, tokenCounterId, receiptCounterId, formatReceipt } from '../../lib/counters.js';
 import { paise, tenderTotalPaise } from '../../lib/money.js';
 import { clinicDate, financialYear, endOfClinicDay, jitterDelay, sleep } from '../../lib/dates.js';
+import { currentSitting } from '../../services/availability.js';
+import { assertNoOpenToken } from '../queue/service.js';
 import { last10Digits } from '../../lib/phone.js';
 import { conflict, validationError, notFound, isDuplicateKey } from '../../lib/errors.js';
 import { assertHospitalScope } from '../../middleware/rbac.js';
@@ -11,7 +13,7 @@ import { logger } from '../../lib/logger.js';
 import { env } from '../../config/env.js';
 import {
   ROLES, NETWORK_STATE, TOKEN_STATUS, TOKEN_SOURCE, VISIT_TYPE,
-  RESPONSE_CODES, AUDIT_ACTIONS,
+  RESPONSE_CODES, AUDIT_ACTIONS, SHIFT,
 } from '../../config/constants.js';
 import { emitQueueSnapshot, emitTokenCreated, emitTransactionRecorded } from '../../realtime/emitters.js';
 import { recordTokenChargeSafe } from '../../services/billing.js';
@@ -111,12 +113,18 @@ export const createWalkin = async ({ body, actor, ip, userAgent }) => {
           const live = await Doctor.findById(doctor._id).session(session).lean();
           if (!live?.isActive) throw notFound('Doctor not found');
 
-          const baseFee = live.fees[visitType];
-          if (baseFee == null) throw validationError([{ path: 'visitType', message: 'Unknown visit type' }]);
-          if (discount > baseFee) {
+          const listedFee = live.fees?.[visitType];
+          if (listedFee == null) throw validationError([{ path: 'visitType', message: 'Unknown visit type' }]);
+          // A changed charge is recorded as a discount off the listed fee, or —
+          // when it is higher — as the base itself, so baseFee - discount is
+          // always what was charged and the tender check below is against it.
+          const override = body.overrideFee != null ? Number(body.overrideFee) : null;
+          const baseFee = override != null ? Math.max(listedFee, override) : listedFee;
+          const appliedDiscount = override != null ? baseFee - override : discount;
+          if (appliedDiscount > baseFee) {
             throw validationError([{ path: 'discount', message: 'Discount cannot exceed the consultation fee' }]);
           }
-          const totalFee = baseFee - discount;
+          const totalFee = baseFee - appliedDiscount;
 
           // (2) The split-POS invariant, asserted in integer paise against the
           // LIVE fee. Comparing rupee floats is how a ₹0.01 drift silently
@@ -136,12 +144,29 @@ export const createWalkin = async ({ body, actor, ip, userAgent }) => {
           }
 
           const patient = await resolvePatient(body, session);
+          // Same patient, same doctor, same day: one open token.
+          await assertNoOpenToken({
+            doctorId: live._id, date, patientId: patient._id,
+            familyMemberId: body.familyMemberId ?? null, name: body.patient?.name || patient.name,
+          }, session);
 
-          // (3) Allocate the token number. A WriteConflict here is transient and
+          // (3) Allocate the token number in the sitting under way, on the SAME
+          // counter app bookings use for it. A shift-less counter here clashed
+          // with the app's per-shift one on the unique index, and every retry
+          // got the same rolled-back number. A WriteConflict is transient and
           // retried by withTransaction itself.
-          const tokenNumber = await nextSequence(tokenCounterId(live._id, date), session, {
+          const sitting = currentSitting(live, date, hospital.timezone);
+          const shift = sitting?.shift ?? null;
+          const counter = () => nextSequence(tokenCounterId(live._id, date, shift), session, {
             expiresAt: endOfClinicDay(date, hospital.timezone),
           });
+          let tokenNumber = await counter();
+          // Patients may have picked numbers ahead of the counter online.
+          // eslint-disable-next-line no-await-in-loop
+          while (await OPDToken.exists({ doctorId: live._id, date, shift: shift ?? SHIFT.MORNING, tokenNumber }).session(session)) {
+            // eslint-disable-next-line no-await-in-loop
+            tokenNumber = await counter();
+          }
 
           // (4) Receipt sequence: per hospital, per financial year.
           const receiptSeq = await nextSequence(receiptCounterId(hospital._id, fy), session);
@@ -152,6 +177,7 @@ export const createWalkin = async ({ body, actor, ip, userAgent }) => {
             [{
               tokenNumber,
               date,
+              ...(shift ? { shift, startTime: sitting.startTime, endTime: sitting.endTime } : {}),
               doctorId: live._id,
               hospitalId: hospital._id,
               patientId: patient._id,
@@ -182,7 +208,7 @@ export const createWalkin = async ({ body, actor, ip, userAgent }) => {
               date,
               visitType,
               baseFee,
-              discount,
+              discount: appliedDiscount,
               totalFee,
               tender,
               upiRef: body.upiRef,
@@ -226,6 +252,7 @@ export const createWalkin = async ({ body, actor, ip, userAgent }) => {
           tokenNumber: result.token.tokenNumber,
           totalFee: result.transaction.totalFee,
           receiptNumber: result.transaction.receiptNumber,
+          ...(body.overrideFee != null ? { overrideFee: Number(body.overrideFee), listedFee: doctor.fees?.[visitType] ?? null } : {}),
         },
       });
       // Platform billing. The consultation fee is passed because PERCENT mode
@@ -261,11 +288,21 @@ export const createWalkin = async ({ body, actor, ip, userAgent }) => {
 
 /** Pay for an already-booked (app) token. Same tender invariant. */
 export const payForToken = async ({ tokenId, body, actor, ip, userAgent }) => {
+  if (!mongoose.isValidObjectId(tokenId)) throw notFound('Token not found');
+  // A retried request (double tap, flaky network) returns the first result.
+  if (body.idempotencyKey) {
+    const dupe = await Transaction.findOne({ idempotencyKey: body.idempotencyKey }).lean();
+    if (dupe) return dupe;
+  }
   const token = await OPDToken.findById(tokenId);
   if (!token) throw notFound('Token not found');
   // Pay-once. Also guaranteed by the unique index on tokenId, but failing here
   // gives the desk a sentence instead of a duplicate-key error.
   if (token.isPaid) throw conflict('This token has already been paid');
+  // Money for a visit that will not happen is a refund waiting to happen.
+  if ([TOKEN_STATUS.CANCELLED, TOKEN_STATUS.RESCHEDULE_NEEDED].includes(token.status)) {
+    throw conflict(`This token is ${token.status.toLowerCase().replace('_', ' ')} — it cannot be paid for`);
+  }
 
   const [hospital, doctor] = await Promise.all([
     Hospital.findById(token.hospitalId).lean(),
@@ -278,9 +315,14 @@ export const payForToken = async ({ tokenId, body, actor, ip, userAgent }) => {
     throw conflict('You can only take payment for your own patients');
   }
 
+  if (!doctor) throw notFound('Doctor not found');
   const fy = financialYear(token.date);
-  const baseFee = doctor.fees[token.visitType];
+  const baseFee = doctor.fees?.[token.visitType];
+  if (baseFee == null) throw validationError([{ path: 'visitType', message: 'This doctor has no fee for this visit type' }]);
   const discount = Number(body.discount || 0);
+  if (discount > baseFee) {
+    throw validationError([{ path: 'discount', message: 'Discount cannot exceed the consultation fee' }]);
+  }
   const totalFee = baseFee - discount;
 
   const tender = {
@@ -318,7 +360,9 @@ export const payForToken = async ({ tokenId, body, actor, ip, userAgent }) => {
     emitTransactionRecorded({ transaction: out, tokenNumber: token.tokenNumber });
     writeAuditLog({
       actorId: actor.id, actorRole: actor.role, action: AUDIT_ACTIONS.TOKEN_PAID,
-      entityType: 'Transaction', entityId: out._id, hospitalId: hospital._id, ip, userAgent,
+      entityType: 'Transaction', entityId: out._id, hospitalId: hospital._id,
+      // Without the district the entry never reached the district admin's audit screen.
+      districtId: hospital.districtId ?? null, ip, userAgent,
       after: { receiptNumber: out.receiptNumber, totalFee },
     });
     return out;

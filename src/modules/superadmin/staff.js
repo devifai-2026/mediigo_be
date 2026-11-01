@@ -1,7 +1,6 @@
 import mongoose from 'mongoose';
 import { User, Hospital, Doctor, OnboardingSubmission, AuditLog, District } from '../../models/index.js';
-import { hashPassword } from '../auth/service.js';
-import { requestOtp } from '../auth/service.js';
+import { hashPassword, requestOtp, mintSession } from '../auth/service.js';
 import { writeAuditLog } from '../../lib/auditLog.js';
 import { notFound, conflict, validationError, forbidden } from '../../lib/errors.js';
 import { randomToken } from '../../lib/crypto.js';
@@ -189,6 +188,14 @@ export const createStaff = async ({ body, actor, ip, userAgent }) => {
   if (body.role === ROLES.FIELD_AGENT && !body.districtId) {
     throw validationError([{ path: 'districtId', message: 'A field agent must be assigned to a district' }]);
   }
+  // A front desk works one clinic's queue; without one the login can do nothing.
+  if (body.role === ROLES.RECEPTIONIST) {
+    const clinic = body.hospitalId && mongoose.isValidObjectId(body.hospitalId)
+      ? await Hospital.findById(body.hospitalId).select('districtId').lean()
+      : null;
+    if (!clinic) throw validationError([{ path: 'hospitalId', message: 'Pick the clinic this front desk works at' }]);
+    body.districtId = body.districtId || (clinic.districtId ? String(clinic.districtId) : '');
+  }
   // One district, one admin — otherwise "who approves this?" has two answers.
   if (body.role === ROLES.EXEC_ADMIN) {
     const existing = await User.findOne({ role: ROLES.EXEC_ADMIN, districtId: body.districtId, isActive: true }).lean();
@@ -206,6 +213,8 @@ export const createStaff = async ({ body, actor, ip, userAgent }) => {
     districtId: body.districtId || null,
     hospitalId: body.hospitalId || null,
     passwordHash: await hashPassword(password),
+    // The admin has seen it, typed or generated; its owner picks their own.
+    mustChangePassword: true,
     createdBy: actor.id,
   });
 
@@ -260,25 +269,54 @@ export const updateStaff = async ({ userId, patch, actor, ip, userAgent }) => {
   return { user: (await User.findById(user._id)).toSafeJSON(), changed: true };
 };
 
-/** Set a temporary password. Returned once, then only its hash exists. */
+/**
+ * Whose password the Super Admin may reset. Wider than MANAGED on purpose:
+ * doctors are created and retired through the clinic lifecycle, but a doctor
+ * locked out of their login still needs someone who can let them back in.
+ */
+const RESETTABLE = [...MANAGED, ROLES.DOCTOR, ROLES.PHARMACIST];
+
+const assertResettable = (user) => {
+  if (!user) throw notFound('User not found');
+  if (!RESETTABLE.includes(user.role)) throw conflict(`${user.role} accounts set their own password`);
+  return user;
+};
+
+/**
+ * Set a password: the one the admin typed, or a generated one. Returned once,
+ * then only its hash exists. Every session the user had is signed out, and
+ * they are asked to choose their own on next sign-in.
+ */
 export const resetPassword = async ({ userId, password, actor, ip, userAgent }) => {
-  const user = assertManaged(await User.findById(userId));
+  if (!mongoose.isValidObjectId(userId)) throw notFound('User not found');
+  const user = assertResettable(await User.findById(userId));
   const next = password || randomToken(6);
   if (next.length < 8) {
     throw validationError([{ path: 'password', message: 'Password must be at least 8 characters' }]);
   }
-  await User.updateOne({ _id: user._id }, { $set: { passwordHash: await hashPassword(next) } });
+  await User.updateOne(
+    { _id: user._id },
+    { $set: { passwordHash: await hashPassword(next), mustChangePassword: true }, $inc: { tokenVersion: 1 } },
+  );
   writeAuditLog({
     actorId: actor.id, actorRole: actor.role, action: 'USER_PASSWORD_RESET',
-    entityType: 'User', entityId: user._id, ip, userAgent, after: { by: 'temporary password' },
+    entityType: 'User', entityId: user._id, ip, userAgent,
+    after: { by: password ? 'password set by admin' : 'temporary password' },
   });
-  return { temporaryPassword: next };
+  return {
+    temporaryPassword: next,
+    user: { id: String(user._id), name: user.name, phone: user.phone, email: user.email ?? null, role: user.role },
+  };
 };
 
-/** Send a WhatsApp reset code instead, so the password never passes through you. */
+/**
+ * Send a WhatsApp reset code instead, so the password never passes through
+ * you. The user enters it on "Forgot password?" along with a new password.
+ */
 export const sendPasswordResetOtp = async ({ userId, actor, ip, userAgent }) => {
-  const user = assertManaged(await User.findById(userId));
-  await requestOtp({ phone: user.phone, purpose: OTP_PURPOSE.STAFF_LOGIN, ip, userAgent });
+  if (!mongoose.isValidObjectId(userId)) throw notFound('User not found');
+  const user = assertResettable(await User.findById(userId));
+  await requestOtp({ phone: user.phone, purpose: OTP_PURPOSE.PASSWORD_RESET, ip, userAgent });
   writeAuditLog({
     actorId: actor.id, actorRole: actor.role, action: 'USER_PASSWORD_RESET',
     entityType: 'User', entityId: user._id, ip, userAgent, after: { by: 'whatsapp code' },
@@ -365,7 +403,7 @@ export const deactivateStaff = async ({ userId, reason, transferToUserId, actor,
     }
   }
 
-  await User.updateOne({ _id: user._id }, { $set: { isActive: false, districtId: null } });
+  await User.updateOne({ _id: user._id }, { $set: { isActive: false, districtId: null }, $inc: { tokenVersion: 1 } });
   writeAuditLog({
     actorId: actor.id, actorRole: actor.role, action: AUDIT_ACTIONS.USER_DEACTIVATED,
     entityType: 'User', entityId: user._id, reason, ip, userAgent,
@@ -424,4 +462,27 @@ export const deleteStaff = async ({ userId, actor, ip, userAgent }) => {
     before: { name: user.name, role: user.role, phone: user.phone },
   });
   return { deleted: true, name: user.name };
+};
+
+/**
+ * "Login as": a short session as another user, for seeing exactly what they
+ * see. Another Super Admin is off limits — that would be a way round their
+ * 2FA — and so is anyone deactivated. The session has no refresh token, so it
+ * ends on its own; every audit entry made with it names the admin.
+ */
+export const impersonate = async ({ userId, actor, ip, userAgent }) => {
+  if (actor.impersonatorId) throw forbidden('Return to your own account first');
+  if (!mongoose.isValidObjectId(userId)) throw notFound('User not found');
+  const user = await User.findById(userId);
+  if (!user) throw notFound('User not found');
+  if (user.role === ROLES.SUPER_ADMIN) throw forbidden('You cannot sign in as another Super Admin');
+  if (!user.isActive) throw conflict('This account is deactivated');
+
+  const session = await mintSession(user, { impersonatorId: actor.id });
+  writeAuditLog({
+    actorId: actor.id, actorRole: actor.role, action: AUDIT_ACTIONS.USER_IMPERSONATED,
+    entityType: 'User', entityId: user._id, districtId: user.districtId ?? null, hospitalId: user.hospitalId ?? null,
+    ip, userAgent, after: { role: user.role, name: user.name },
+  });
+  return { accessToken: session.accessToken, user: session.user, expiresInMinutes: session.expiresInMinutes };
 };

@@ -1,5 +1,6 @@
 import { Hospital, Doctor, OPDToken, District } from '../models/index.js';
 import { distanceMatrix, geocodePlaces } from '../lib/providers/google-maps.js';
+import { suggestAddresses, resolvePlace, placesEnabled } from '../modules/onboarding/lookup.js';
 import { round1 } from '../lib/geo.js';
 import { clinicDate } from '../lib/dates.js';
 import { env } from '../config/env.js';
@@ -20,7 +21,10 @@ const stripTitle = (s) => String(s || '').replace(/^\s*(dr|doctor)\.?\s+/i, '');
  * scan — so a SUSPENDED or DEBOARDED clinic can never surface to a patient.
  */
 export const findNearbyDoctors = async ({ lng, lat, radiusKm, specialty, search, limit = 30 }) => {
-  const radius = Math.min(radiusKm || env.NEARBY_DEFAULT_RADIUS_KM, env.NEARBY_MAX_RADIUS_KM);
+  // 'any' drops the distance bound; results are still nearest-first and
+  // capped at NEARBY_MAX_HOSPITALS clinics.
+  const anyDistance = radiusKm === 'any';
+  const radius = anyDistance ? null : Math.min(radiusKm || env.NEARBY_DEFAULT_RADIUS_KM, env.NEARBY_MAX_RADIUS_KM);
   // One compiled pattern reused by every $regexMatch below. Built once so the
   // term is escaped in exactly one place.
   const searchRe = search ? new RegExp(escapeRegex(String(search).trim()), 'i') : null;
@@ -30,15 +34,12 @@ export const findNearbyDoctors = async ({ lng, lat, radiusKm, specialty, search,
       $geoNear: {
         near: { type: 'Point', coordinates: [Number(lng), Number(lat)] },
         distanceField: 'crowMeters',
-        maxDistance: radius * 1000,
+        ...(anyDistance ? {} : { maxDistance: radius * 1000 }),
         spherical: true,
         query: { networkState: NETWORK_STATE.ACTIVE },
         key: 'location',
       },
     },
-    // MongoDB 8 removed $geoNear's own `limit`; results arrive already sorted by
-    // distance, so a $limit immediately after is equivalent and supported.
-    { $limit: env.NEARBY_MAX_HOSPITALS },
     { $addFields: { crowKm: { $divide: ['$crowMeters', 1000] } } },
     // Does the SEARCH TERM match this clinic itself — its name, city or area?
     // Computed before the doctor lookup so the lookup can use it: a search for
@@ -98,6 +99,10 @@ export const findNearbyDoctors = async ({ lng, lat, radiusKm, specialty, search,
       },
     },
     { $match: { 'doctors.0': { $exists: true } } },
+    // The cap applies to clinics that MATCHED, not to the nearest clinics
+    // overall: capping first let 40 nearby clinics with no matching doctor
+    // crowd out the one that had them. Still nearest-first ($geoNear order).
+    { $limit: env.NEARBY_MAX_HOSPITALS },
     // clinicMatches is deliberately absent: it is a pipeline helper, not part
     // of the response contract.
     { $project: { name: 1, code: 1, type: 1, address: 1, location: 1, crowKm: 1, doctors: 1, subscriptionPlan: 1, contactPhone: 1, timezone: 1 } },
@@ -384,19 +389,26 @@ export const listCities = async () => {
  * from. Google only fills in when that turns up little, so "Behala" still
  * resolves even with no clinic there yet, and a typo does not cost a call.
  */
-export const searchPlaces = async ({ q, limit = 8 }) => {
+export const searchPlaces = async ({ q, limit = 8, lat, lng }) => {
   const term = String(q || '').trim();
   if (term.length < 2) return [];
   const re = new RegExp(escapeRegex(term), 'i');
   const lower = term.toLowerCase();
 
-  const [cityRows, districts, hospitals] = await Promise.all([
+  // Google knows where a typed place actually is. Our own data only knows
+  // where clinics are, so a locality built from clinic addresses lands on a
+  // clinic, not on the place — which is why it is only the fallback below.
+  const google = placesEnabled() && term.length >= 3;
+  const near = lat != null && lng != null ? { lat: Number(lat), lng: Number(lng) } : null;
+
+  const [cityRows, districts, hospitals, predictions] = await Promise.all([
     listCities(),
     District.find({ name: re }).select('name state centroid').lean(),
     Hospital.find({
       networkState: NETWORK_STATE.ACTIVE,
       $or: [{ 'address.line1': re }, { 'address.line2': re }, { 'address.pincode': re }],
     }).select('address location').lean(),
+    google ? suggestAddresses(term, { near, areas: true }) : [],
   ]);
 
   const rows = [];
@@ -408,6 +420,12 @@ export const searchPlaces = async ({ q, limit = 8 }) => {
     seen.add(key);
     rows.push(row);
   };
+
+  // Google's places first: coordinates are resolved when one is picked
+  // (resolveSearchPlace), so the row carries a placeId instead.
+  for (const p of predictions) {
+    add({ kind: 'place', placeId: p.placeId, label: p.main, sublabel: p.secondary, city: p.main });
+  }
 
   for (const c of cityRows) {
     if (!re.test(c.city)) continue;
@@ -427,7 +445,7 @@ export const searchPlaces = async ({ q, limit = 8 }) => {
   // house number is dropped ("45A Gariahat Road" -> "Gariahat Road"), and a
   // part left with no words at all ("DD-12", "AA-II") is not a place.
   const localities = new Map();
-  for (const h of hospitals) {
+  for (const h of google && predictions.length ? [] : hospitals) {
     const [lng, lat] = h.location?.coordinates ?? [];
     if (lat == null) continue;
     const city = (h.address.city || '').split(',').pop().trim();
@@ -448,13 +466,15 @@ export const searchPlaces = async ({ q, limit = 8 }) => {
     add({ ...r, lat: Number((r.lat / n).toFixed(6)), lng: Number((r.lng / n).toFixed(6)) });
   }
 
-  if (rows.length < 3 && term.length >= 3) {
+  if (!predictions.length && rows.length < 3 && term.length >= 3) {
     for (const p of await geocodePlaces(term)) add({ kind: 'place', ...p });
   }
 
   // Same intent ranking as suggestSearch: a match at the start of the name or
-  // of a word beats one buried mid-word.
+  // of a word beats one buried mid-word. Google's rows keep Google's own order
+  // (it already ranks by relevance and proximity) and stay ahead of ours.
   const rank = (r) => {
+    if (r.placeId) return -1;
     const label = r.label.toLowerCase();
     if (label.startsWith(lower)) return 0;
     if (label.split(/\s+/).some((w) => w.startsWith(lower))) return 1;
@@ -462,4 +482,11 @@ export const searchPlaces = async ({ q, limit = 8 }) => {
   };
   rows.sort((a, b) => rank(a) - rank(b));
   return rows.slice(0, limit);
+};
+
+/** A picked Google place -> the point to search from. */
+export const resolveSearchPlace = async (placeId) => {
+  const r = await resolvePlace(placeId);
+  if (!r || r.lat == null) return null;
+  return { label: r.name || r.city || r.formatted, sublabel: r.formatted, city: r.city, lat: r.lat, lng: r.lng };
 };

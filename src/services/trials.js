@@ -25,9 +25,11 @@ export const addDays = (from, days) => new Date(new Date(from).getTime() + days 
 export const assertTrialLength = async (days) => {
   const settings = await getBillingSettings();
   const n = Number(days);
-  if (!Number.isInteger(n) || n < 0) throw validationError('Trial length must be a whole number of days');
+  // Issues as a list: given a bare string, validationError fell back to
+  // "Validation failed" and the reason never reached the screen.
+  if (!Number.isInteger(n) || n < 0) throw validationError([{ path: 'days', message: 'Trial length must be a whole number of days' }]);
   if (n > settings.maxTrialDays) {
-    throw validationError(`Trial cannot exceed ${settings.maxTrialDays} days — raise the platform maximum first`);
+    throw validationError([{ path: 'days', message: `Trial cannot exceed ${settings.maxTrialDays} days — raise the platform maximum first` }]);
   }
   return n;
 };

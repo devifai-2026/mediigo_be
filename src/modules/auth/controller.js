@@ -73,6 +73,14 @@ export const me = async (req, res) => {
 };
 
 export const changePassword = async (req, res) => {
-  const data = await service.changePassword({ userId: req.user.id, ...req.body });
+  const { refreshToken, ...data } = await service.changePassword({ userId: req.user.id, ...req.body });
+  // Changing the password signs out every other session; this one carries on
+  // with a refresh token minted on the new version.
+  setRefreshCookie(res, refreshToken);
+  res.json({ ok: true, data });
+};
+
+export const resetPassword = async (req, res) => {
+  const data = await service.resetPasswordWithOtp(req.body);
   res.json({ ok: true, data });
 };

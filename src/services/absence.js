@@ -14,6 +14,8 @@ import { nextSequence, tokenCounterId } from '../lib/counters.js';
 import { TOKEN_STATUS, BOOKING_HORIZON_DAYS } from '../config/constants.js';
 import { bookableDates, shiftsOn, resolveBookableShift, doctorAvailability } from './availability.js';
 import { emitQueueSnapshot } from '../realtime/emitters.js';
+import { assertTokenScope } from '../middleware/rbac.js';
+import { assertNoOpenToken } from '../modules/queue/service.js';
 
 /**
  * Close a date, or one sitting on it, and flag everyone booked into it.
@@ -114,6 +116,8 @@ export const clearDoctorOff = async ({ doctorId, date, shift = null, actor }) =>
 export const rescheduleToken = async ({ tokenId, date, shift, actor }) => {
   const token = await OPDToken.findById(tokenId);
   if (!token) throw notFound('Token not found');
+  // Only the patient themselves, their clinic, or an admin in scope.
+  await assertTokenScope(actor, token);
   if (token.status !== TOKEN_STATUS.RESCHEDULE_NEEDED) {
     throw conflict('Only a token awaiting reschedule can be moved');
   }
@@ -135,6 +139,10 @@ export const rescheduleToken = async ({ tokenId, date, shift, actor }) => {
         session,
         { expiresAt: endOfClinicDay(date, hospital?.timezone) },
       );
+      // Moving onto a day they already hold a token for would double-book them.
+      await assertNoOpenToken({
+        doctorId: doctor._id, date, patientId: token.patientId, familyMemberId: token.familyMemberId, exceptId: token._id,
+      }, session);
       token.tokenNumber = tokenNumber;
       token.date = date;
       token.shift = resolved.shift.shift;
@@ -160,9 +168,10 @@ export const rescheduleToken = async ({ tokenId, date, shift, actor }) => {
 };
 
 /** Open slots a stranded patient can move to — the doctor's own next 7 days. */
-export const rescheduleOptions = async ({ tokenId }) => {
+export const rescheduleOptions = async ({ tokenId, actor }) => {
   const token = await OPDToken.findById(tokenId).lean();
   if (!token) throw notFound('Token not found');
+  await assertTokenScope(actor, token);
   const doctor = await Doctor.findById(token.doctorId).select('name schedule scheduleOverrides hospitalId').lean();
   if (!doctor) throw notFound('Doctor not found');
   const hospital = await Hospital.findById(token.hospitalId).select('timezone name').lean();

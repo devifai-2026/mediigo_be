@@ -1,4 +1,5 @@
 import { Server } from 'socket.io';
+import mongoose from 'mongoose';
 import { verifyToken } from '../lib/jwt.js';
 import { logger } from '../lib/logger.js';
 import { env } from '../config/env.js';
@@ -10,7 +11,7 @@ import { setIo } from './emitters.js';
 import { ROLES, SOCKET_EVENTS } from '../config/constants.js';
 import {
   chamberRoom, chamberPublicRoom, hospitalRoom, hospitalPublicRoom,
-  districtRoom, patientRoom, pharmacyRoom, PLATFORM_ROOM,
+  districtRoom, patientRoom, agentRoom, pharmacyRoom, PLATFORM_ROOM,
 } from './rooms.js';
 
 const PUBLIC_ROLE = 'PUBLIC';
@@ -32,9 +33,9 @@ const authenticateStandee = async (credential) => {
 export const initSocket = (httpServer) => {
   const io = new Server(httpServer, {
     cors: { origin: env.CORS_ORIGINS.length ? env.CORS_ORIGINS : true, credentials: true },
-    // Deliberately disabled: replaying buffered deltas after a reconnect can
+    // Deliberately disabled — by leaving it out: passing `{}` turns recovery
+    // ON with defaults. Replaying buffered deltas after a reconnect can
     // resurrect stale state that loses to MongoDB. Clients refetch instead.
-    connectionStateRecovery: {},
   });
 
   io.use(async (socket, next) => {
@@ -90,6 +91,9 @@ export const initSocket = (httpServer) => {
       case ROLES.PATIENT:
         socket.join(patientRoom(u.id));
         break;
+      case ROLES.FIELD_AGENT:
+        socket.join(agentRoom(u.id));
+        break;
       case PUBLIC_ROLE:
         socket.join(hospitalPublicRoom(u.hospitalId));
         break;
@@ -100,33 +104,44 @@ export const initSocket = (httpServer) => {
     // On-demand chamber joins are always verified server-side. A patient may
     // only watch a chamber they actually hold a token for today — otherwise
     // anyone could subscribe to every chamber on the platform.
+    const isStaff = [ROLES.DOCTOR, ROLES.RECEPTIONIST, ROLES.EXEC_ADMIN, ROLES.SUPER_ADMIN].includes(u.role);
+
+    /**
+     * May this socket see this doctor's queue? Shared by the join and the
+     * reconnect refetch: the refetch had no check at all, so any staff socket
+     * could name any doctor and receive that clinic's patient names and phones.
+     * "Today" is the clinic's own date, not the server default's.
+     */
+    const chamberAccess = async (doctorId) => {
+      if (!mongoose.isValidObjectId(doctorId)) return { error: 'NOT_FOUND' };
+      const doctor = await Doctor.findById(doctorId).select('hospitalId').lean();
+      if (!doctor) return { error: 'NOT_FOUND' };
+      const hospital = await Hospital.findById(doctor.hospitalId).select('districtId timezone').lean();
+      const today = clinicDate(hospital?.timezone);
+
+      let allowed = false;
+      if (u.role === ROLES.SUPER_ADMIN) allowed = true;
+      else if ((u.role === ROLES.DOCTOR || u.role === ROLES.RECEPTIONIST) &&
+               String(doctor.hospitalId) === String(u.hospitalId)) allowed = true;
+      else if (u.role === ROLES.EXEC_ADMIN) {
+        allowed = String(hospital?.districtId) === String(u.districtId);
+      } else if (u.role === ROLES.PATIENT) {
+        const held = await OPDToken.countDocuments({ patientId: u.id, doctorId, date: today });
+        allowed = held > 0;
+      } else if (u.role === PUBLIC_ROLE) {
+        allowed = String(doctor.hospitalId) === String(u.hospitalId);
+      }
+      return allowed ? { today } : { error: 'SCOPE_DENIED' };
+    };
+
     socket.on(SOCKET_EVENTS.JOIN_CHAMBER, async ({ doctorId } = {}, ack) => {
       try {
-        const doctor = await Doctor.findById(doctorId).select('hospitalId').lean();
-        if (!doctor) return ack?.({ ok: false, error: 'NOT_FOUND' });
+        const access = await chamberAccess(doctorId);
+        if (access.error) return ack?.({ ok: false, error: access.error });
 
-        let allowed = false;
-        if (u.role === ROLES.SUPER_ADMIN) allowed = true;
-        else if ((u.role === ROLES.DOCTOR || u.role === ROLES.RECEPTIONIST) &&
-                 String(doctor.hospitalId) === String(u.hospitalId)) allowed = true;
-        else if (u.role === ROLES.EXEC_ADMIN) {
-          const h = await Hospital.findById(doctor.hospitalId).select('districtId').lean();
-          allowed = String(h?.districtId) === String(u.districtId);
-        } else if (u.role === ROLES.PATIENT) {
-          const held = await OPDToken.countDocuments({
-            patientId: u.id, doctorId, date: clinicDate(),
-          });
-          allowed = held > 0;
-        } else if (u.role === PUBLIC_ROLE) {
-          allowed = String(doctor.hospitalId) === String(u.hospitalId);
-        }
-
-        if (!allowed) return ack?.({ ok: false, error: 'SCOPE_DENIED' });
-
-        const isStaff = [ROLES.DOCTOR, ROLES.RECEPTIONIST, ROLES.EXEC_ADMIN, ROLES.SUPER_ADMIN].includes(u.role);
         socket.join(isStaff ? chamberRoom(doctorId) : chamberPublicRoom(doctorId));
 
-        const snapshot = await buildQueueSnapshot(doctorId, clinicDate(), { includePii: isStaff });
+        const snapshot = await buildQueueSnapshot(doctorId, access.today, { includePii: isStaff });
         socket.emit(SOCKET_EVENTS.QUEUE_SNAPSHOT, snapshot);
         return ack?.({ ok: true });
       } catch (err) {
@@ -145,8 +160,11 @@ export const initSocket = (httpServer) => {
     // authoritative snapshot again.
     socket.on(SOCKET_EVENTS.REQUEST_QUEUE_SNAPSHOT, async ({ doctorId, date } = {}, ack) => {
       try {
-        const isStaff = [ROLES.DOCTOR, ROLES.RECEPTIONIST, ROLES.EXEC_ADMIN, ROLES.SUPER_ADMIN].includes(u.role);
-        const snapshot = await buildQueueSnapshot(doctorId, date || clinicDate(), { includePii: isStaff });
+        const access = await chamberAccess(doctorId);
+        if (access.error) return ack?.({ ok: false, error: access.error });
+        // Staff may ask for another day; everyone else only ever gets today.
+        const day = isStaff && /^\d{4}-\d{2}-\d{2}$/.test(String(date || '')) ? date : access.today;
+        const snapshot = await buildQueueSnapshot(doctorId, day, { includePii: isStaff });
         socket.emit(SOCKET_EVENTS.QUEUE_SNAPSHOT, snapshot);
         ack?.({ ok: true });
       } catch {

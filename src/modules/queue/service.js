@@ -13,9 +13,41 @@ import {
 import { writeAuditLog } from '../../lib/auditLog.js';
 import {
   TOKEN_STATUS, TOKEN_SOURCE, NETWORK_STATE, RESPONSE_CODES, ROLES,
-  BREAK_REASONS, BREAK_DURATIONS, FOLLOWUP_STATUS, AUDIT_ACTIONS,
+  BREAK_REASONS, BREAK_DURATIONS, FOLLOWUP_STATUS, AUDIT_ACTIONS, SHIFT,
 } from '../../config/constants.js';
 import { recordTokenChargeSafe } from '../../services/billing.js';
+
+// Statuses that still hold a place in a doctor's day. A completed or cancelled
+// visit frees the patient to book again; a skipped one can be restored.
+const OPEN_STATUSES = [TOKEN_STATUS.WAITING, TOKEN_STATUS.IN_CHAMBER, TOKEN_STATUS.SKIPPED];
+const escapeRx = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * One open token per patient, per doctor, per day.
+ *
+ * "Patient" is the account plus the family member, so a parent can still book
+ * themselves and their child. `name` narrows it further for the desk, which
+ * finds people by phone: a child brought in on a parent's number is the same
+ * account but not the same patient. Run inside the allocating transaction, so
+ * two simultaneous bookings serialize on the counter lock and the second sees
+ * the first.
+ */
+export const assertNoOpenToken = async ({ doctorId, date, patientId, familyMemberId = null, name = null, exceptId = null }, session) => {
+  if (!patientId) return;
+  const existing = await OPDToken.findOne({
+    doctorId, date, patientId,
+    familyMemberId: familyMemberId || null,
+    status: { $in: OPEN_STATUSES },
+    ...(name ? { 'patientSnapshot.name': new RegExp(`^\\s*${escapeRx(String(name).trim())}\\s*$`, 'i') } : {}),
+    ...(exceptId ? { _id: { $ne: exceptId } } : {}),
+  }).select('tokenNumber status').session(session ?? null).lean();
+  if (existing) {
+    throw conflict(
+      `This patient already has token ${existing.tokenNumber} with this doctor on ${date}`,
+      RESPONSE_CODES.DUPLICATE_BOOKING,
+    );
+  }
+};
 
 const loadDoctorAndHospital = async (doctorId) => {
   const doctor = await Doctor.findById(doctorId);
@@ -106,9 +138,11 @@ const assertChamberFree = async (doctorId, date, exceptId = null) => {
  * succeeds with `called: null`: the doctor asked for the consultation to end,
  * and reporting that as a failure (after doing it) leaves the desk guessing.
  */
+const SHIFT_ORDER = { [SHIFT.MORNING]: 0, [SHIFT.AFTERNOON]: 1, [SHIFT.EVENING]: 2 };
+
 export const callNext = async ({ doctorId, actor, outcome, outcomeNotes }) => {
   const { doctor, hospital } = await loadDoctorAndHospital(doctorId);
-  assertDoctorScope(actor, doctor);
+  await assertDoctorScope(actor, doctor);
   const date = clinicDate(hospital.timezone);
 
   if (doctor.session?.isOnBreak) {
@@ -124,8 +158,12 @@ export const callNext = async ({ doctorId, actor, outcome, outcomeNotes }) => {
   }
   const completed = inside[0] ? { tokenNumber: inside[0].tokenNumber } : null;
 
-  const next = await OPDToken.findOne({ doctorId: doctor._id, date, status: TOKEN_STATUS.WAITING })
-    .sort({ tokenNumber: 1 });
+  // Numbers restart each sitting, so order by sitting first: by number alone
+  // the evening's #1 was called ahead of the morning's #5.
+  const waitingNow = await OPDToken.find({ doctorId: doctor._id, date, status: TOKEN_STATUS.WAITING })
+    .select('_id shift tokenNumber').lean();
+  waitingNow.sort((a, b) => (SHIFT_ORDER[a.shift] ?? 0) - (SHIFT_ORDER[b.shift] ?? 0) || a.tokenNumber - b.tokenNumber);
+  const next = waitingNow[0] ? await OPDToken.findById(waitingNow[0]._id) : null;
   if (!next) {
     await emitQueueSnapshot(doctor._id, date);
     if (completed) return { called: null, completed };
@@ -140,7 +178,7 @@ export const callNext = async ({ doctorId, actor, outcome, outcomeNotes }) => {
 /** Re-announce the current token without changing any state. */
 export const recall = async ({ doctorId, actor }) => {
   const { doctor, hospital } = await loadDoctorAndHospital(doctorId);
-  assertDoctorScope(actor, doctor);
+  await assertDoctorScope(actor, doctor);
   const date = clinicDate(hospital.timezone);
 
   const current = await OPDToken.findOne({ doctorId: doctor._id, date, status: TOKEN_STATUS.IN_CHAMBER });
@@ -154,7 +192,7 @@ export const recall = async ({ doctorId, actor }) => {
 export const setTokenStatus = async ({ tokenId, to, reason, actor, outcome, outcomeNotes }) => {
   const token = await OPDToken.findById(tokenId);
   if (!token) throw notFound('Token not found');
-  assertTokenScope(actor, token);
+  await assertTokenScope(actor, token);
 
   const legal = {
     [TOKEN_STATUS.WAITING]: [TOKEN_STATUS.IN_CHAMBER, TOKEN_STATUS.SKIPPED],
@@ -203,10 +241,10 @@ export const restoreSkipped = async ({ tokenId, actor }) =>
 export const recallCompleted = async ({ tokenId, actor }) => {
   const token = await OPDToken.findById(tokenId);
   if (!token) throw notFound('Token not found');
-  assertTokenScope(actor, token);
+  await assertTokenScope(actor, token);
   if (token.status !== TOKEN_STATUS.COMPLETED) throw conflict('Only a completed token can be recalled');
   const { doctor, hospital } = await loadDoctorAndHospital(token.doctorId);
-  assertDoctorScope(actor, doctor);
+  await assertDoctorScope(actor, doctor);
   if (token.date !== clinicDate(hospital.timezone)) throw conflict('Only today’s patients can be recalled');
 
   const busy = await OPDToken.exists({ doctorId: doctor._id, date: token.date, status: TOKEN_STATUS.IN_CHAMBER });
@@ -244,8 +282,8 @@ export const recallCompleted = async ({ tokenId, actor }) => {
  * client clocks drift.
  */
 export const startBreak = async ({ doctorId, reason, minutes, actor }) => {
-  const { doctor } = await loadDoctorAndHospital(doctorId);
-  assertDoctorScope(actor, doctor, { selfOnly: false });
+  const { doctor, hospital } = await loadDoctorAndHospital(doctorId);
+  await assertDoctorScope(actor, doctor, { selfOnly: false });
 
   if (!BREAK_REASONS.includes(reason)) {
     throw validationError([{ path: 'reason', message: `Reason must be one of: ${BREAK_REASONS.join(', ')}` }]);
@@ -261,26 +299,28 @@ export const startBreak = async ({ doctorId, reason, minutes, actor }) => {
   );
   const updated = await Doctor.findById(doctor._id).lean();
   emitDoctorBreak(updated);
-  await emitQueueSnapshot(doctor._id, clinicDate());
+  // The clinic's own "today": the server default is wrong for any other timezone.
+  await emitQueueSnapshot(doctor._id, clinicDate(hospital.timezone));
   return updated.session;
 };
 
 export const endBreak = async ({ doctorId, actor }) => {
-  const { doctor } = await loadDoctorAndHospital(doctorId);
-  assertDoctorScope(actor, doctor, { selfOnly: false });
+  const { doctor, hospital } = await loadDoctorAndHospital(doctorId);
+  await assertDoctorScope(actor, doctor, { selfOnly: false });
   await Doctor.updateOne(
     { _id: doctor._id },
     { $set: { 'session.isOnBreak': false, 'session.breakReason': null, 'session.breakUntil': null } },
   );
   const updated = await Doctor.findById(doctor._id).lean();
   emitDoctorBreak(updated);
-  await emitQueueSnapshot(doctor._id, clinicDate());
+  // The clinic's own "today": the server default is wrong for any other timezone.
+  await emitQueueSnapshot(doctor._id, clinicDate(hospital.timezone));
   return updated.session;
 };
 
 export const setBookingOpen = async ({ doctorId, isOpen, actor }) => {
   const { doctor } = await loadDoctorAndHospital(doctorId);
-  assertDoctorScope(actor, doctor, { selfOnly: false });
+  await assertDoctorScope(actor, doctor, { selfOnly: false });
   await Doctor.updateOne({ _id: doctor._id }, { $set: { 'session.isBookingOpen': Boolean(isOpen) } });
   const updated = await Doctor.findById(doctor._id).lean();
   emitDoctorSession(updated);
@@ -392,6 +432,9 @@ export const allocateToken = async ({ doctor, hospital, date, shift, fields, fix
           // is not swept away before that day arrives.
           expiresAt: endOfClinicDay(date, hospital.timezone),
         });
+        await assertNoOpenToken({
+          doctorId: doctor._id, date, patientId: fields.patientId, familyMemberId: fields.familyMemberId,
+        }, session);
         let tokenNumber = fixedNumber;
         if (tokenNumber == null) {
           // Patients booking online may have picked numbers ahead of the
@@ -399,7 +442,10 @@ export const allocateToken = async ({ doctor, hospital, date, shift, fields, fix
           // retry would exhaust the retries after five picked numbers in a row.
           tokenNumber = await counter();
           // eslint-disable-next-line no-await-in-loop
-          while (await OPDToken.exists({ doctorId: doctor._id, date, shift: shift ?? null, tokenNumber }).session(session)) {
+          // A token stored without a shift defaults to MORNING (OPDToken), so
+          // that is what a shift-less sitting must be checked against —
+          // `shift: null` never matched anything and skipped no numbers.
+          while (await OPDToken.exists({ doctorId: doctor._id, date, shift: shift ?? SHIFT.MORNING, tokenNumber }).session(session)) {
             // eslint-disable-next-line no-await-in-loop
             tokenNumber = await counter();
           }
@@ -474,7 +520,7 @@ const CANCEL_ROLE = {
 export const cancelToken = async ({ tokenId, actor, reason }) => {
   const token = await OPDToken.findById(tokenId);
   if (!token) throw notFound('Token not found');
-  assertTokenScope(actor, token);
+  await assertTokenScope(actor, token);
 
   const byRole = CANCEL_ROLE[actor.role] ?? 'ADMIN';
   const isPatient = byRole === 'PATIENT';
@@ -512,7 +558,10 @@ export const cancelToken = async ({ tokenId, actor, reason }) => {
     );
   }
 
-  const by = await User.findById(actor.id).select('name').lean();
+  const [by, cancelHospital] = await Promise.all([
+    User.findById(actor.id).select('name').lean(),
+    Hospital.findById(token.hospitalId).select('districtId').lean(),
+  ]);
   if (flagDoctor) emitTokenCancelled({ token: { ...updated, cancelReason: why || 'Cancelled by patient' }, byRole, byName: by?.name });
   writeAuditLog({
     actorId: actor.id,
@@ -521,6 +570,7 @@ export const cancelToken = async ({ tokenId, actor, reason }) => {
     entityType: 'OPDToken',
     entityId: token._id,
     hospitalId: token.hospitalId,
+    districtId: cancelHospital?.districtId ?? null,
     // Whether money was kept is the question an audit of a cancellation asks.
     after: { reason: why || 'Cancelled by patient', byRole, wasPaid: Boolean(token.isPaid), refunded: false },
   });
@@ -536,7 +586,7 @@ export const acknowledgeCancellation = async ({ tokenId, actor }) => {
   if (actor.role === ROLES.DOCTOR && String(token.doctorId) !== String(actor.doctorId)) {
     throw notFound('Token not found');
   }
-  assertTokenScope(actor, token);
+  await assertTokenScope(actor, token);
   if (token.status !== TOKEN_STATUS.CANCELLED) throw conflict('This token is not cancelled');
   await OPDToken.updateOne(
     { _id: token._id },

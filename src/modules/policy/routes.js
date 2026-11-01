@@ -5,7 +5,7 @@ import { validate } from '../../middleware/validate.js';
 import { requireAuth, requireActiveUser } from '../../middleware/auth.js';
 import { requireRole } from '../../middleware/rbac.js';
 import { ROLES } from '../../config/constants.js';
-import { lookupSchema, addPolicySchema, hashParam } from './schema.js';
+import { lookupSchema, addPolicySchema, hashParam, updatePolicySchema } from './schema.js';
 
 export const policyRoutes = Router();
 
@@ -27,5 +27,6 @@ policyRoutes.post(
 policyRoutes.patch(
   '/policies/:id',
   requireRole(ROLES.PATIENT, ROLES.FIELD_AGENT, ROLES.SUPER_ADMIN),
+  validate(updatePolicySchema),
   asyncHandler(controller.update),
 );

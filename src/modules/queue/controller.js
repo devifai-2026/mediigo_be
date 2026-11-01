@@ -85,7 +85,7 @@ export const cancelAck = async (req, res) => {
 // ---- Reschedule after a doctor goes off ----
 
 export const rescheduleChoices = async (req, res) => {
-  const data = await rescheduleOptions({ tokenId: req.params.tokenId });
+  const data = await rescheduleOptions({ tokenId: req.params.tokenId, actor: req.user });
   res.json({ ok: true, data });
 };
 

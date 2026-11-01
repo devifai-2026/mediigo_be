@@ -26,26 +26,41 @@ export const verifyPassword = async (hash, plain) => {
   }
 };
 
-const mintSession = async (user) => {
+// An impersonated session gets a short access token and no refresh token, so
+// it ends on its own and can never outlive the admin's intent.
+const IMPERSONATION_TTL_MINUTES = 30;
+
+export const mintSession = async (user, { impersonatorId = null } = {}) => {
+  if (impersonatorId) {
+    return {
+      accessToken: signAccessToken(user, { impersonatorId, ttlMinutes: IMPERSONATION_TTL_MINUTES }),
+      refreshToken: null,
+      expiresInMinutes: IMPERSONATION_TTL_MINUTES,
+      user: sessionUser(user),
+    };
+  }
   const sessionId = randomUUID();
   await User.updateOne({ _id: user._id }, { $set: { lastLoginAt: new Date() } });
   return {
     accessToken: signAccessToken(user),
     refreshToken: signRefreshToken(user, sessionId),
-    user: {
-      id: String(user._id),
-      name: user.name,
-      phone: user.phone,
-      email: user.email ?? null,
-      photo: user.photo?.url ? { url: user.photo.url } : null,
-      role: user.role,
-      hospitalId: user.hospitalId ? String(user.hospitalId) : null,
-      districtId: user.districtId ? String(user.districtId) : null,
-      doctorId: user.doctorId ? String(user.doctorId) : null,
-      familyMembers: user.familyMembers || [],
-    },
+    user: sessionUser(user),
   };
 };
+
+const sessionUser = (user) => ({
+  id: String(user._id),
+  name: user.name,
+  phone: user.phone,
+  email: user.email ?? null,
+  photo: user.photo?.url ? { url: user.photo.url } : null,
+  role: user.role,
+  hospitalId: user.hospitalId ? String(user.hospitalId) : null,
+  districtId: user.districtId ? String(user.districtId) : null,
+  doctorId: user.doctorId ? String(user.doctorId) : null,
+  familyMembers: user.familyMembers || [],
+  mustChangePassword: Boolean(user.mustChangePassword),
+});
 
 /**
  * Issue an OTP.
@@ -187,6 +202,15 @@ export const verifyOtp = async ({ phone, purpose = OTP_PURPOSE.PATIENT_LOGIN, ot
 
   if (!user || !user.isActive) throw forbidden('This account has been deactivated');
 
+  // A code on its own must not get round a 2FA policy: for a role that needs
+  // password + code, only the STAFF_2FA code issued by passwordLogin counts.
+  if (purpose !== OTP_PURPOSE.STAFF_2FA && user.role !== ROLES.PATIENT) {
+    const settings = await getWaSettings();
+    if ((settings.require2faRoles || []).includes(user.role) || user.twoFactorEnabled) {
+      throw forbidden('This account must sign in with its password and a WhatsApp code');
+    }
+  }
+
   return mintSession(user);
 };
 
@@ -227,9 +251,10 @@ export const passwordLogin = async ({ identifier, password, ip, userAgent }) => 
   const needs2fa = (settings.require2faRoles || []).includes(user.role) || user.twoFactorEnabled;
 
   if (needs2fa) {
-    await requestOtp({ phone: user.phone, purpose: OTP_PURPOSE.STAFF_2FA, ip, userAgent });
+    const issued = await requestOtp({ phone: user.phone, purpose: OTP_PURPOSE.STAFF_2FA, ip, userAgent });
     return {
       requires2fa: true,
+      otpLength: issued.otpLength,
       // Masked, for showing the person where the code went.
       phone: maskPhone(user.phone),
       // The real number, because the next call must verify against the
@@ -265,8 +290,30 @@ export const changePassword = async ({ userId, currentPassword, newPassword }) =
   if (user.passwordHash && (await verifyPassword(user.passwordHash, newPassword))) {
     throw validationError([{ path: 'newPassword', message: 'Pick a password different from the current one' }]);
   }
-  await User.updateOne({ _id: user._id }, { $set: { passwordHash: await hashPassword(newPassword) } });
-  return { changed: true };
+  await User.updateOne(
+    { _id: user._id },
+    { $set: { passwordHash: await hashPassword(newPassword), mustChangePassword: false }, $inc: { tokenVersion: 1 } },
+  );
+  // The caller's own session continues: hand it a refresh token on the new version.
+  const fresh = await User.findById(user._id);
+  return { changed: true, refreshToken: signRefreshToken(fresh, randomUUID()) };
+};
+
+/**
+ * Forgot password: a WhatsApp code sent by requestOtp (purpose PASSWORD_RESET)
+ * proves the caller holds the number, then the new password replaces the old
+ * and every existing session is signed out.
+ */
+export const resetPasswordWithOtp = async ({ phone, otp, newPassword }) => {
+  const digits = last10Digits(phone);
+  const claimed = await claimOtp({ digits, purpose: OTP_PURPOSE.PASSWORD_RESET, otp });
+  const user = claimed.userId ? await User.findById(claimed.userId) : null;
+  if (!user || !user.isActive) throw forbidden('This account has been deactivated');
+  await User.updateOne(
+    { _id: user._id },
+    { $set: { passwordHash: await hashPassword(newPassword), mustChangePassword: false }, $inc: { tokenVersion: 1 } },
+  );
+  return { reset: true };
 };
 
 export const refreshSession = async ({ refreshToken }) => {
@@ -275,6 +322,8 @@ export const refreshSession = async ({ refreshToken }) => {
 
   const user = await User.findById(claims.sub);
   if (!user || !user.isActive) throw forbidden('This account has been deactivated');
+  // The password was reset or changed since this session began.
+  if ((claims.tv ?? 0) !== (user.tokenVersion ?? 0)) throw unauthenticated('Session expired — sign in again');
 
   // Rotate: a new refresh token each time, so a stolen one has a short life.
   return {

@@ -11,7 +11,7 @@
  */
 import { Doctor } from '../models/Doctor.js';
 import { OPDToken } from '../models/OPDToken.js';
-import { clinicDate } from '../lib/dates.js';
+import { clinicDate, tzOffsetMinutes } from '../lib/dates.js';
 import { BOOKING_HORIZON_DAYS, SHIFT, TOKEN_STATUS } from '../config/constants.js';
 import { env } from '../config/env.js';
 
@@ -321,4 +321,19 @@ export const sittingSlots = async ({ doctor, timezone, date, shift, now = new Da
     // What the patient gets without choosing: the first free number.
     suggested: slots.find((s) => s.status === 'free')?.number ?? null,
   };
+};
+
+/**
+ * The sitting a walk-in at `now` belongs to: the one in progress, else the
+ * next one today, else today's last (a doctor running late). Null when the
+ * doctor has no sittings that day, which is the arrival-order queue app
+ * bookings also use, so both share one counter either way.
+ */
+export const currentSitting = (doctor, date, timezone, now = new Date()) => {
+  const sittings = shiftsOn(doctor, date);
+  if (!sittings.length) return null;
+  const mins = (((now.getUTCHours() * 60 + now.getUTCMinutes() + tzOffsetMinutes(timezone, now)) % 1440) + 1440) % 1440;
+  return sittings.find((s) => mins >= toMinutes(s.startTime) && mins < toMinutes(s.endTime))
+    ?? sittings.find((s) => mins < toMinutes(s.startTime))
+    ?? sittings[sittings.length - 1];
 };

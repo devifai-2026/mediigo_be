@@ -3,7 +3,8 @@ import * as controller from './controller.js';
 import { asyncHandler } from '../../lib/asyncHandler.js';
 import { validate } from '../../middleware/validate.js';
 import { requireAuth, requireActiveUser } from '../../middleware/auth.js';
-import { requireRole } from '../../middleware/rbac.js';
+import { requireRole, assertHospitalScope } from '../../middleware/rbac.js';
+import { Hospital } from '../../models/index.js';
 import { ROLES } from '../../config/constants.js';
 import {
   walkinSchema, paySchema, dayCloseSchema, expenseSchema, voidExpenseSchema, deskQuerySchema,
@@ -49,7 +50,10 @@ posRoutes.get(
   deskWindow,
   asyncHandler(async (req, res) => {
     const hospitalId = req.user.hospitalId || req.query.hospitalId;
-    if (!hospitalId) throw validationError('No clinic in scope — pass hospitalId');
+    if (!hospitalId) throw validationError([{ path: 'query.hospitalId', message: 'No clinic in scope — pass hospitalId' }]);
+    // An admin-named clinic must be one they may see: a district admin reading
+    // another district's revenue was possible before this.
+    assertHospitalScope(req.user, await Hospital.findById(hospitalId).select('districtId').lean());
     const doctorId = await reportDoctorId(req.user, req.query.doctorId);
     res.json({
       ok: true,

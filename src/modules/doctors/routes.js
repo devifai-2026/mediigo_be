@@ -6,7 +6,7 @@ import { validate } from '../../middleware/validate.js';
 import { requireAuth, optionalAuth, requireActiveUser } from '../../middleware/auth.js';
 import { requireRole } from '../../middleware/rbac.js';
 import { ROLES } from '../../config/constants.js';
-import { nearbySchema, slotsSchema, suggestSchema, feesSchema, profileSchema, scheduleSchema, markOffSchema } from './schema.js';
+import { nearbySchema, slotsSchema, suggestSchema, placeResolveSchema, feesSchema, profileSchema, scheduleSchema, markOffSchema } from './schema.js';
 
 export const doctorRoutes = Router();
 
@@ -34,6 +34,8 @@ doctorRoutes.get('/cities', asyncHandler(controller.cities));
 
 // Type-ahead for the location box: cities, localities and pincodes to search from.
 doctorRoutes.get('/places', validate(suggestSchema), asyncHandler(controller.places));
+// A picked Google suggestion -> coordinates. Public, like /places.
+doctorRoutes.get('/places/resolve', validate(placeResolveSchema), asyncHandler(controller.resolvePlace));
 
 doctorRoutes.get(
   '/',

@@ -27,6 +27,14 @@ export const addPolicySchema = {
   }),
 };
 
+// Only the policy's own terms can be edited. Unchecked, the body went straight
+// into $set — so a patient could re-point patientId and take over a policy.
+export const updatePolicySchema = {
+  params: z.object({ id: z.string().regex(/^[a-f0-9]{24}$/i, 'Invalid policy id') }),
+  body: addPolicySchema.body.omit({ aadhaarNumber: true, aadhaarHash: true }).partial().strict()
+    .refine((b) => Object.keys(b).length > 0, { message: 'Nothing to update' }),
+};
+
 export const hashParam = {
   params: z.object({ aadhaarHash: z.string().length(64) }),
 };

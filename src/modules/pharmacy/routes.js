@@ -99,6 +99,6 @@ pharmacyRoutes.post(
   requireRole(ROLES.DOCTOR),
   validate({ params: z.object({ id: objectId }) }),
   asyncHandler(async (req, res) => {
-    res.json({ ok: true, data: await resetPharmacistPassword({ id: req.params.id, actor: req.user }) });
+    res.json({ ok: true, data: await resetPharmacistPassword({ id: req.params.id, actor: req.user, ip: req.ip, userAgent: req.headers['user-agent'] }) });
   }),
 );

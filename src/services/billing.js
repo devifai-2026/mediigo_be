@@ -1,4 +1,6 @@
+import mongoose from 'mongoose';
 import { BillingCharge, getBillingSettings } from '../models/index.js';
+import { nextSequence } from '../lib/counters.js';
 import { TOKEN_SOURCE } from '../config/constants.js';
 import { logger } from '../lib/logger.js';
 import { paise } from '../lib/money.js';
@@ -97,38 +99,58 @@ export const recordTokenCharge = async ({ hospital, token, consultationFee = 0 }
   });
   if (amountPaise <= 0) return null;
 
-  // The cap is a rail against a mis-set rate, so it is applied against what the
-  // clinic has already accrued this month rather than trusting one row alone.
-  let cappedBy = null;
   const cap = rule.maxMonthlyChargePaise;
-  if (cap > 0) {
-    const [agg] = await BillingCharge.aggregate([
-      { $match: { hospitalId: hospital._id, month, status: { $ne: 'WAIVED' } } },
-      { $group: { _id: null, total: { $sum: '$amountPaise' } } },
-    ]);
-    const already = agg?.total || 0;
-    if (already >= cap) return null;
-    if (already + amountPaise > cap) {
-      amountPaise = cap - already;
-      cappedBy = 'MONTHLY_CAP';
-    }
-  }
+  const doc = (amount, cappedBy) => ({
+    hospitalId: hospital._id,
+    tokenId: token._id,
+    doctorId: token.doctorId ?? null,
+    date: token.date,
+    month,
+    source: token.source,
+    channel: channelOf(token.source),
+    amountPaise: amount,
+    chargeMode: rule.chargeMode,
+    rateAppliedPaise: amount,
+    percentBpsApplied: rule.chargeMode === 'PERCENT' ? rule.percentBps : 0,
+    cappedBy,
+  });
 
   try {
-    return await BillingCharge.create({
-      hospitalId: hospital._id,
-      tokenId: token._id,
-      doctorId: token.doctorId ?? null,
-      date: token.date,
-      month,
-      source: token.source,
-      channel: channelOf(token.source),
-      amountPaise,
-      chargeMode: rule.chargeMode,
-      rateAppliedPaise: amountPaise,
-      percentBpsApplied: rule.chargeMode === 'PERCENT' ? rule.percentBps : 0,
-      cappedBy,
-    });
+    if (!(cap > 0)) return await BillingCharge.create(doc(amountPaise, null));
+
+    // The cap is a rail against a mis-set rate, so it is applied against what
+    // the clinic has already accrued this month rather than trusting one row.
+    //
+    // Read-then-insert let two bookings at the same moment both see room under
+    // the cap and both be charged. Bumping a per-clinic, per-month counter
+    // inside the transaction locks that month: concurrent charges serialize
+    // on it (Mongo's WriteConflict, retried by withTransaction), so each one
+    // sees the total including the one before it.
+    const session = await mongoose.startSession();
+    try {
+      let created = null;
+      await session.withTransaction(async () => {
+        created = null;
+        await nextSequence(`billcap:${hospital._id}:${month}`, session, {
+          expiresAt: new Date(Date.now() + 62 * 86400000),
+        });
+        const [agg] = await BillingCharge.aggregate([
+          { $match: { hospitalId: hospital._id, month, status: { $ne: 'WAIVED' } } },
+          { $group: { _id: null, total: { $sum: '$amountPaise' } } },
+        ]).session(session);
+        const already = agg?.total || 0;
+        if (already >= cap) return;
+        const capped = already + amountPaise > cap;
+        const [row] = await BillingCharge.create(
+          [doc(capped ? cap - already : amountPaise, capped ? 'MONTHLY_CAP' : null)],
+          { session },
+        );
+        created = row;
+      });
+      return created;
+    } finally {
+      await session.endSession();
+    }
   } catch (err) {
     // Duplicate key means this token was already billed. That is the idempotency
     // guarantee working, not a failure.

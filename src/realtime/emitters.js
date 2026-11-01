@@ -1,5 +1,5 @@
 import { SOCKET_EVENTS } from '../config/constants.js';
-import { chamberRoom, chamberPublicRoom, hospitalRoom, districtRoom, patientRoom, pharmacyRoom, PLATFORM_ROOM } from './rooms.js';
+import { chamberRoom, chamberPublicRoom, hospitalRoom, districtRoom, patientRoom, agentRoom, pharmacyRoom, PLATFORM_ROOM } from './rooms.js';
 import { buildQueueSnapshot } from '../services/queueSnapshot.js';
 import { logger } from '../lib/logger.js';
 import { randomUUID } from '../lib/crypto.js';
@@ -156,10 +156,12 @@ export const emitSubmissionStatus = ({ submission, from, to }) => {
     kind: submission.kind,
     from,
     to,
-    reviewNotes: submission.reviewNotes ?? null,
+    reviewNotes: submission.reviewNotes ?? submission.rejectionReason ?? null,
   };
   safeEmit(districtRoom(submission.districtId), SOCKET_EVENTS.SUBMISSION_STATUS_CHANGED, payload);
-  safeEmit(patientRoom(submission.agentId), SOCKET_EVENTS.SUBMISSION_STATUS_CHANGED, payload);
+  // To the agent's own room: they were never in a patient room, so the old
+  // target meant no field agent ever heard their approval or rejection.
+  safeEmit(agentRoom(submission.agentId), SOCKET_EVENTS.SUBMISSION_STATUS_CHANGED, payload);
 };
 
 export const emitTransactionRecorded = ({ transaction, tokenNumber }) => {

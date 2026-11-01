@@ -21,6 +21,9 @@ export const walkinSchema = {
       .optional(),
     visitType: z.enum(Object.values(VISIT_TYPE)).default(VISIT_TYPE.FRESH),
     discount: money,
+    // The desk's "change consultation charge": the amount actually charged in
+    // place of the listed fee. Audited with the listed fee alongside.
+    overrideFee: z.coerce.number().min(0).max(100000).optional(),
     tender,
     upiRef: z.string().max(60).optional(),
     cardLast4: z.string().regex(/^\d{4}$/).optional(),
@@ -42,6 +45,8 @@ export const dayCloseSchema = {
   query: z.object({
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     doctorId: z.string().regex(/^[a-f0-9]{24}$/i).optional(),
+    // Admins have no clinic of their own, so they name the one to close.
+    hospitalId: z.string().regex(/^[a-f0-9]{24}$/i).optional(),
   }),
 };
 

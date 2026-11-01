@@ -10,7 +10,7 @@ import { asyncHandler } from '../../lib/asyncHandler.js';
 import { validate } from '../../middleware/validate.js';
 import { requireAuth, requireActiveUser } from '../../middleware/auth.js';
 import { requireRole } from '../../middleware/rbac.js';
-import { ROLES } from '../../config/constants.js';
+import { ROLES, SUBMISSION_STATUS } from '../../config/constants.js';
 
 export const onboardingRoutes = Router();
 
@@ -118,6 +118,10 @@ onboardingRoutes.post(
 );
 onboardingRoutes.get(
   '/submissions',
+  // Every clinic's contacts and payload are in these. Before this role list a
+  // patient, doctor or front desk got the whole network's.
+  requireRole(ROLES.FIELD_AGENT, ROLES.EXEC_ADMIN, ROLES.SUPER_ADMIN),
+  validate({ query: z.object({ status: z.enum(Object.values(SUBMISSION_STATUS)).optional() }) }),
   asyncHandler(async (req, res) => res.json({ ok: true, data: await service.list({ actor: req.user, status: req.query.status }) })),
 );
 onboardingRoutes.get(

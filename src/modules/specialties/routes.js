@@ -18,7 +18,9 @@ const upload = multer({
   limits: { fileSize: 8 * 1024 * 1024, files: 1 },
 });
 
-const ADMINS = [ROLES.EXEC_ADMIN, ROLES.SUPER_ADMIN];
+// The list is shared by every district, so only the Super Admin changes it: a
+// district admin deleting or renaming one changed search for the whole network.
+const ADMINS = [ROLES.SUPER_ADMIN];
 
 const bodySchema = {
   body: z.object({

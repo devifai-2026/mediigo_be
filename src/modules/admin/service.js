@@ -21,7 +21,12 @@ export const listApprovals = async ({ actor, status }) =>
 export const listHospitals = async ({ actor, networkState, search }) => {
   const filter = { ...districtScoped(actor) };
   if (networkState) filter.networkState = networkState;
-  if (search) filter.$or = [{ name: new RegExp(search, 'i') }, { code: new RegExp(search, 'i') }];
+  if (search) {
+    // Escaped: a raw pattern from the query string is both a regex injection
+    // and a way to hang the event loop with a catastrophic one.
+    const re = new RegExp(String(search).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+    filter.$or = [{ name: re }, { code: re }];
+  }
   return Hospital.find(filter).populate('districtId', 'name code').sort({ name: 1 }).lean();
 };
 

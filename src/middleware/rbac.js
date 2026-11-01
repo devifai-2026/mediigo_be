@@ -1,5 +1,6 @@
 import { ROLES, RESPONSE_CODES } from '../config/constants.js';
 import { forbidden } from '../lib/errors.js';
+import { Hospital } from '../models/Hospital.js';
 
 export const requireRole = (...allowed) => (req, _res, next) => {
   if (!req.user) return next(forbidden('Authentication required'));
@@ -63,7 +64,17 @@ export const assertHospitalScope = (user, hospital) => {
   throw denied('hospital');
 };
 
-export const assertDoctorScope = (user, doctor, { selfOnly = false } = {}) => {
+// A district admin's reach is their district, which a doctor or token only
+// knows through its hospital — so this one check costs a read.
+const assertInDistrict = async (user, hospitalId, what) => {
+  const hospital = await Hospital.findById(hospitalId).select('districtId').lean();
+  if (!hospital || !sameId(hospital.districtId, user.districtId)) throw denied(what);
+  return true;
+};
+
+// Async because of the district check; every caller must await it, or a
+// refusal becomes an unhandled rejection and the action goes ahead.
+export const assertDoctorScope = async (user, doctor, { selfOnly = false } = {}) => {
   if (!doctor) throw denied('doctor');
   if (user.role === ROLES.SUPER_ADMIN) return true;
   if (user.role === ROLES.DOCTOR) {
@@ -77,11 +88,11 @@ export const assertDoctorScope = (user, doctor, { selfOnly = false } = {}) => {
     if (!sameId(doctor.hospitalId, user.hospitalId)) throw denied('doctor');
     return true;
   }
-  if (user.role === ROLES.EXEC_ADMIN) return true; // district checked via the hospital
+  if (user.role === ROLES.EXEC_ADMIN) return assertInDistrict(user, doctor.hospitalId, 'doctor');
   throw denied('doctor');
 };
 
-export const assertTokenScope = (user, token) => {
+export const assertTokenScope = async (user, token) => {
   if (!token) throw denied('token');
   if (user.role === ROLES.SUPER_ADMIN) return true;
   if (user.role === ROLES.PATIENT) {
@@ -92,7 +103,7 @@ export const assertTokenScope = (user, token) => {
     if (!sameId(token.hospitalId, user.hospitalId)) throw denied('token');
     return true;
   }
-  if (user.role === ROLES.EXEC_ADMIN) return true;
+  if (user.role === ROLES.EXEC_ADMIN) return assertInDistrict(user, token.hospitalId, 'token');
   throw denied('token');
 };
 

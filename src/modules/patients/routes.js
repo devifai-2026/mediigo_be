@@ -10,7 +10,7 @@ import { notFound, validationError } from '../../lib/errors.js';
 import { aadhaarHash, isValidAadhaar } from '../../lib/crypto.js';
 import { backfillPatientLink } from '../policy/service.js';
 import { reverseGeocode } from '../../lib/providers/google-maps.js';
-import { ROLES, OTP_PURPOSE } from '../../config/constants.js';
+import { ROLES, OTP_PURPOSE, TOKEN_STATUS } from '../../config/constants.js';
 import { requestOtp, confirmPhoneChange } from '../auth/service.js';
 import * as account from './account.js';
 import { last10Digits, isValidIndianMobile } from '../../lib/phone.js';
@@ -247,9 +247,18 @@ patientRoutes.delete('/me/family/:memberId', asyncHandler(async (req, res) => {
 }));
 
 // Bookings list — the feature the prototype declared but never implemented.
-patientRoutes.get('/me/tokens', asyncHandler(async (req, res) => {
+// ?status=WAITING or a comma list (WAITING,IN_CHAMBER). Validated: a raw
+// query value let status[$ne]=… through into the filter.
+const statusList = z.string().max(80).optional().transform((s, ctx) => {
+  if (!s) return undefined;
+  const list = s.split(',').map((x) => x.trim()).filter(Boolean);
+  const bad = list.find((x) => !Object.values(TOKEN_STATUS).includes(x));
+  if (bad) { ctx.addIssue({ code: 'custom', message: `Unknown status ${bad}` }); return z.NEVER; }
+  return list;
+});
+patientRoutes.get('/me/tokens', validate({ query: z.object({ status: statusList }) }), asyncHandler(async (req, res) => {
   const filter = { patientId: req.user.id };
-  if (req.query.status) filter.status = req.query.status;
+  if (req.query.status) filter.status = { $in: req.query.status };
   const tokens = await OPDToken.find(filter)
     .populate('doctorId', 'name specialty chamberNumber')
     .populate('hospitalId', 'name address contactPhone location')

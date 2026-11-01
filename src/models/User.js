@@ -60,6 +60,12 @@ const userSchema = new mongoose.Schema(
     passwordHash: { type: String, default: null, select: false },
     // Per-user override of the role-level 2FA policy set by Super Admin.
     twoFactorEnabled: { type: Boolean, default: false },
+    // Bumped whenever a password is reset or changed, or the account is
+    // deactivated. It rides in the refresh token, so every session minted
+    // before the bump stops refreshing.
+    tokenVersion: { type: Number, default: 0 },
+    // Set when an admin issues a password; cleared once its owner picks their own.
+    mustChangePassword: { type: Boolean, default: false },
 
     isActive: { type: Boolean, default: true },
     // Set when a patient deletes their own account. The record stays as an

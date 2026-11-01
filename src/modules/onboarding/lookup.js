@@ -16,10 +16,17 @@ const realKey = () => {
 const AUTOCOMPLETE = 'https://maps.googleapis.com/maps/api/place/autocomplete/json';
 const DETAILS = 'https://maps.googleapis.com/maps/api/place/details/json';
 
-export const suggestAddresses = async (input) => {
+/**
+ * `near` biases results towards a point (the patient's current position), and
+ * `areas` restricts them to places rather than street addresses — what a
+ * patient means by "Salt Lake" is the neighbourhood, not a building in it.
+ */
+export const suggestAddresses = async (input, { near = null, areas = false } = {}) => {
   if (!realKey() || !input || input.trim().length < 3) return [];
   try {
-    const url = `${AUTOCOMPLETE}?input=${encodeURIComponent(input)}&components=country:in&key=${realKey()}`;
+    const bias = near ? `&location=${near.lat},${near.lng}&radius=50000` : '';
+    const types = areas ? '&types=geocode' : '';
+    const url = `${AUTOCOMPLETE}?input=${encodeURIComponent(input)}&components=country:in${bias}${types}&key=${realKey()}`;
     const res = await fetch(url, { signal: AbortSignal.timeout(4000) });
     const data = await res.json();
     if (data.status !== 'OK' && data.status !== 'ZERO_RESULTS') {

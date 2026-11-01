@@ -1,8 +1,9 @@
 import mongoose from 'mongoose';
-import { Review, OPDToken, Doctor } from '../../models/index.js';
+import { Review, OPDToken, Doctor, Hospital } from '../../models/index.js';
 import { REVIEW_STATUS, TOKEN_STATUS, ROLES, AUDIT_ACTIONS } from '../../config/constants.js';
 import { conflict, notFound, forbidden } from '../../lib/errors.js';
 import { writeAuditLog } from '../../lib/auditLog.js';
+import { assertDoctorScope } from '../../middleware/rbac.js';
 
 /**
  * Patient ratings of a consultation.
@@ -112,8 +113,10 @@ export const listForModeration = async ({ status, actor }) => {
   const q = {};
   if (status) q.status = status;
   // An exec admin sees only their own district's clinics.
+  // (The filter was Doctor.find({}) — every doctor in the network.)
   if (actor.role === ROLES.EXEC_ADMIN) {
-    const docs = await Doctor.find({}, { _id: 1, hospitalId: 1 }).lean();
+    const clinics = await Hospital.find({ districtId: actor.districtId }, { _id: 1 }).lean();
+    const docs = await Doctor.find({ hospitalId: { $in: clinics.map((h) => h._id) } }, { _id: 1 }).lean();
     q.doctorId = { $in: docs.map((d) => d._id) };
   }
   const rows = await Review.find(q).sort({ status: 1, createdAt: -1 }).limit(300).lean();
@@ -144,6 +147,8 @@ export const listForModeration = async ({ status, actor }) => {
 export const moderateReview = async ({ reviewId, action, comment, note, actor, ip, userAgent }) => {
   const review = await Review.findById(reviewId);
   if (!review) throw notFound('Review not found');
+  // A district admin moderates only their own district's doctors.
+  await assertDoctorScope(actor, await Doctor.findById(review.doctorId).select('hospitalId').lean());
 
   if (action === 'DELETE') {
     await Review.deleteOne({ _id: review._id });

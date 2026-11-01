@@ -164,6 +164,8 @@ export const setPharmacistActive = async ({ id, isActive, actor, ip, userAgent }
   await assertCanManage(actor);
   const user = await ownPharmacist(id, actor);
   user.isActive = isActive;
+  // Deactivation signs them out of every device at their next refresh.
+  if (!isActive) user.tokenVersion = (user.tokenVersion ?? 0) + 1;
   await user.save();
   if (!isActive) {
     writeAuditLog({
@@ -174,11 +176,20 @@ export const setPharmacistActive = async ({ id, isActive, actor, ip, userAgent }
   return staffRow(user);
 };
 
-export const resetPharmacistPassword = async ({ id, actor }) => {
+export const resetPharmacistPassword = async ({ id, actor, ip, userAgent }) => {
   await assertCanManage(actor);
   const user = await ownPharmacist(id, actor);
   const password = randomToken(6);
+  // The same rules as every other reset: old sessions end, and the pharmacist
+  // replaces the password the doctor has now seen.
   user.passwordHash = await hashPassword(password);
+  user.mustChangePassword = true;
+  user.tokenVersion = (user.tokenVersion ?? 0) + 1;
   await user.save();
+  writeAuditLog({
+    actorId: actor.id, actorRole: actor.role, action: 'USER_PASSWORD_RESET',
+    entityType: 'User', entityId: user._id, hospitalId: actor.hospitalId, ip, userAgent,
+    after: { by: 'temporary password' },
+  });
   return { pharmacist: staffRow(user), temporaryPassword: password };
 };

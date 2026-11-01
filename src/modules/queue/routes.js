@@ -10,7 +10,7 @@ import { requireAuth, optionalAuth, requireActiveUser } from '../../middleware/a
 import { requireRole } from '../../middleware/rbac.js';
 import { ROLES, TOKEN_STATUS } from '../../config/constants.js';
 import {
-  queryDate, statusSchema, breakSchema, bookSchema, bookingOpenSchema, rescheduleSchema,
+  queryDate, statusSchema, breakSchema, bookSchema, bookingOpenSchema, rescheduleSchema, callNextSchema,
   followUpSchema, followUpRespondSchema, followUpReleaseSchema,
 } from './schema.js';
 import {
@@ -23,6 +23,8 @@ import { forbidden } from '../../lib/errors.js';
 export const queueRoutes = Router();
 
 const DESK = [ROLES.DOCTOR, ROLES.RECEPTIONIST, ROLES.SUPER_ADMIN];
+const objectId = z.string().regex(/^[a-f0-9]{24}$/i, 'Invalid id');
+const tokenParam = { params: z.object({ tokenId: objectId }).passthrough() };
 
 /**
  * Today's roster for the caller's clinic: every doctor, their sittings, how
@@ -108,6 +110,8 @@ queueRoutes.get('/:doctorId', optionalAuth, validate(queryDate), asyncHandler(co
 queueRoutes.post(
   '/:doctorId/call-next',
   requireAuth, asyncHandler(requireActiveUser), requireRole(...DESK),
+  // The outcome is stored on the consultation; unchecked, any string went in.
+  validate(callNextSchema),
   asyncHandler(controller.callNext),
 );
 queueRoutes.post(
@@ -223,14 +227,17 @@ queueRoutes.post(
 );
 
 // ---- Reschedule: a doctor went off and this patient must move ----
+// The patient, their clinic's desk, or an admin; assertTokenScope narrows it
+// to the token's own patient / clinic / district.
+const RESCHEDULERS = [ROLES.PATIENT, ...DESK, ROLES.EXEC_ADMIN];
 queueRoutes.get(
   '/tokens/:tokenId/reschedule-options',
-  requireAuth, asyncHandler(requireActiveUser),
+  requireAuth, asyncHandler(requireActiveUser), requireRole(...RESCHEDULERS), validate(tokenParam),
   asyncHandler(controller.rescheduleChoices),
 );
 queueRoutes.post(
   '/tokens/:tokenId/reschedule',
-  requireAuth, asyncHandler(requireActiveUser),
+  requireAuth, asyncHandler(requireActiveUser), requireRole(...RESCHEDULERS), validate(tokenParam),
   validate(rescheduleSchema), asyncHandler(controller.reschedule),
 );
 

@@ -25,7 +25,12 @@ export const cities = async (_req, res) => {
 };
 
 export const places = async (req, res) => {
-  res.json({ ok: true, data: await service.places({ q: req.query.q, limit: req.query.limit }) });
+  const { q, limit, lat, lng } = req.query;
+  res.json({ ok: true, data: await service.places({ q, limit, lat, lng }) });
+};
+
+export const resolvePlace = async (req, res) => {
+  res.json({ ok: true, data: await service.resolvePlace(req.query.placeId) });
 };
 
 export const specialties = async (_req, res) => {
@@ -82,7 +87,7 @@ export const slots = async (req, res) => {
 export const updateSchedule = async (req, res) => {
   const doctor = await Doctor.findById(req.params.id);
   if (!doctor) throw notFound('Doctor not found');
-  assertDoctorScope(req.user, doctor);
+  await assertDoctorScope(req.user, doctor);
   doctor.schedule = req.body.schedule;
   await doctor.save();
   writeAuditLog({
@@ -95,7 +100,7 @@ export const updateSchedule = async (req, res) => {
 export const markOff = async (req, res) => {
   const doctor = await Doctor.findById(req.params.id).select('hospitalId userId');
   if (!doctor) throw notFound('Doctor not found');
-  assertDoctorScope(req.user, doctor);
+  await assertDoctorScope(req.user, doctor);
   const data = await markDoctorOff({
     doctorId: req.params.id, date: req.body.date, shift: req.body.shift ?? null,
     reason: req.body.reason ?? '', actor: req.user,
@@ -106,7 +111,7 @@ export const markOff = async (req, res) => {
 export const clearOff = async (req, res) => {
   const doctor = await Doctor.findById(req.params.id).select('hospitalId userId');
   if (!doctor) throw notFound('Doctor not found');
-  assertDoctorScope(req.user, doctor);
+  await assertDoctorScope(req.user, doctor);
   const data = await clearDoctorOff({
     doctorId: req.params.id, date: req.body.date, shift: req.body.shift ?? null, actor: req.user,
   });

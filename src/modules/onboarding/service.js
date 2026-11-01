@@ -33,7 +33,10 @@ export const create = async ({ body, actor }) => {
   const sub = new OnboardingSubmission({
     kind: body.kind,
     agentId: actor.id,
-    districtId: body.districtId || actor.districtId,
+    // Only a Super Admin files into a district of their choosing; everyone
+    // else files into their own, or a district admin's queue could be stuffed
+    // from outside it.
+    districtId: actor.role === ROLES.SUPER_ADMIN ? (body.districtId || actor.districtId) : (actor.districtId || body.districtId),
     status: SUBMISSION_STATUS.DRAFT,
     payload: body.payload,
     documents: body.documents || [],
@@ -176,7 +179,11 @@ export const list = async ({ actor, status }) => {
   // An agent sees only their own submissions — the prototype leaked every
   // clinic in the network into "My Submissions".
   if (actor.role === ROLES.FIELD_AGENT) filter.agentId = actor.id;
-  else if (scope.districtId) filter.districtId = scope.districtId;
+  else if (actor.role === ROLES.EXEC_ADMIN) {
+    // A district admin with no district sees nothing, never everything.
+    if (!scope.districtId) return [];
+    filter.districtId = scope.districtId;
+  } else if (actor.role !== ROLES.SUPER_ADMIN) return [];
   if (status) filter.status = status;
   return OnboardingSubmission.find(filter)
     .populate('reviewedBy', 'name')

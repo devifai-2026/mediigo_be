@@ -40,7 +40,11 @@ adminRoutes.get('/approvals', asyncHandler(controller.listApprovals));
 adminRoutes.post('/submissions/:id/approve', validate(approveSchema), asyncHandler(controller.approve));
 adminRoutes.post('/submissions/:id/reject', validate(reasonSchema), asyncHandler(controller.reject));
 
-adminRoutes.get('/hospitals', asyncHandler(controller.listHospitals));
+adminRoutes.get(
+  '/hospitals',
+  validate({ query: z.object({ networkState: z.enum(Object.values(NETWORK_STATE)).optional(), search: z.string().max(80).optional() }) }),
+  asyncHandler(controller.listHospitals),
+);
 adminRoutes.post('/hospitals/:id/suspend', validate(reasonSchema), asyncHandler(controller.suspend));
 adminRoutes.post('/hospitals/:id/reactivate', asyncHandler(controller.reactivate));
 // Exec Admin reaches this too, but the service downgrades them to a request.

@@ -170,6 +170,8 @@ export const approveSubmission = async ({ submissionId, actor, ip, userAgent, pa
                 email: p.receptionistEmail || null,
                 role: ROLES.RECEPTIONIST,
                 passwordHash,
+                // The approver has seen this one; its owner picks their own.
+                mustChangePassword: signIn === 'TEMP_PASSWORD',
                 hospitalId: hospital._id,
                 createdBy: actor.id,
               }],
@@ -198,6 +200,8 @@ export const approveSubmission = async ({ submissionId, actor, ip, userAgent, pa
             [{
               phone, name, email: email || null, role: ROLES.DOCTOR,
               passwordHash,
+              // The approver has seen this one; its owner picks their own.
+              mustChangePassword: signIn === 'TEMP_PASSWORD',
               hospitalId: hospital._id, createdBy: actor.id,
             }],
             { session },
@@ -239,6 +243,8 @@ export const approveSubmission = async ({ submissionId, actor, ip, userAgent, pa
           [{
             phone: p.phone, name: withDoctorTitle(p.name), role: ROLES.DOCTOR,
             passwordHash,
+            // The approver has seen this one; its owner picks their own.
+            mustChangePassword: signIn === 'TEMP_PASSWORD',
             hospitalId: hospital._id, createdBy: actor.id,
           }],
           { session },
@@ -298,6 +304,11 @@ export const rejectSubmission = async ({ submissionId, reason, actor, ip, userAg
   if (!submission) throw notFound('Submission not found');
   assertSubmissionScope(actor, submission);
   const why = requireReason(reason);
+  // Only something still awaiting a decision can be rejected. Rejecting an
+  // APPROVED submission left its clinic live while reopening the lead.
+  if (![SUBMISSION_STATUS.SUBMITTED, SUBMISSION_STATUS.UNDER_REVIEW].includes(submission.status)) {
+    throw conflict(`This submission is ${submission.status.toLowerCase().replace('_', ' ')} — it can no longer be rejected`);
+  }
 
   const from = submission.status;
   submission.status = SUBMISSION_STATUS.REJECTED;

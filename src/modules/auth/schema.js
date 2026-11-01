@@ -2,11 +2,23 @@ import { z } from 'zod';
 import { OTP_PURPOSE } from '../../config/constants.js';
 
 const phone = z.string().min(10).max(15);
+const newPassword = z.string().min(8, 'Password must be at least 8 characters').max(72);
 
+// STAFF_2FA is deliberately absent: only passwordLogin may issue that code,
+// after the password has been checked. Accepting it here let anyone holding
+// the phone skip the password entirely.
 export const requestOtpSchema = {
   body: z.object({
     phone,
-    purpose: z.enum([OTP_PURPOSE.PATIENT_LOGIN, OTP_PURPOSE.STAFF_LOGIN, OTP_PURPOSE.STAFF_2FA]).optional(),
+    purpose: z.enum([OTP_PURPOSE.PATIENT_LOGIN, OTP_PURPOSE.STAFF_LOGIN, OTP_PURPOSE.PASSWORD_RESET]).optional(),
+  }),
+};
+
+export const resetPasswordSchema = {
+  body: z.object({
+    phone,
+    otp: z.string().min(4).max(8),
+    newPassword,
   }),
 };
 
@@ -29,7 +41,7 @@ export const staffLoginSchema = {
 export const changePasswordSchema = {
   body: z.object({
     currentPassword: z.string().max(72).optional(),
-    newPassword: z.string().min(8, 'Password must be at least 8 characters').max(72),
+    newPassword,
   }),
 };
 

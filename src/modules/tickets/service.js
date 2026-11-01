@@ -37,12 +37,15 @@ export const visibilityFilter = async (actor) => {
 /** Only admins move tickets across the board or comment internally. */
 const canTriage = (actor) => [ROLES.SUPER_ADMIN, ROLES.EXEC_ADMIN].includes(actor.role);
 
+// Ids may arrive populated ({ _id, name }) — String() of that never matches.
+const idOf = (v) => String(v?._id ?? v ?? '');
+
 const assertVisible = async (actor, ticket) => {
   if (!ticket) throw notFound('Ticket not found');
   if (actor.role === ROLES.SUPER_ADMIN) return ticket;
   if (String(ticket.raisedById) === String(actor.id)) return ticket;
-  if (actor.role === ROLES.EXEC_ADMIN && String(ticket.districtId) === String(actor.districtId)) return ticket;
-  if ([ROLES.DOCTOR, ROLES.RECEPTIONIST].includes(actor.role) && String(ticket.hospitalId) === String(actor.hospitalId)) return ticket;
+  if (actor.role === ROLES.EXEC_ADMIN && idOf(ticket.districtId) === String(actor.districtId)) return ticket;
+  if ([ROLES.DOCTOR, ROLES.RECEPTIONIST].includes(actor.role) && idOf(ticket.hospitalId) === String(actor.hospitalId)) return ticket;
   throw forbidden('You do not have access to this ticket');
 };
 
@@ -120,12 +123,14 @@ export const listTickets = async ({ actor, status, priority, search }) => {
     .limit(500)
     .lean();
 
-  return tickets.map((t) => ({
+  // Comments stay out of the list: internal admin notes rode along in them to
+  // whoever raised the ticket. getTicket returns the thread, filtered.
+  return tickets.map(({ comments, ...t }) => ({
     ...t,
     id: String(t._id),
     districtName: t.districtId?.name ?? null,
     hospitalName: t.hospitalId?.name ?? null,
-    commentCount: (t.comments || []).length,
+    commentCount: (comments || []).filter((c) => !c.internal || canTriage(actor)).length,
     unread: !(t.readBy || []).some((r) => String(r.userId) === String(actor.id)),
   }));
 };

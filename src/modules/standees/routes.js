@@ -69,7 +69,19 @@ standeeRoutes.post(
   }),
 );
 
-standeeRoutes.get('/', asyncHandler(async (req, res) => {
+/**
+ * A field agent or district admin works one district; a standee may only be
+ * placed in, moved within, or taken from a clinic there.
+ */
+const assertStandeeClinic = async (user, hospitalId) => {
+  if (user.role === ROLES.SUPER_ADMIN || !hospitalId) return;
+  const h = await Hospital.findById(hospitalId).select('districtId').lean();
+  if (!h || String(h.districtId) !== String(user.districtId)) throw notFound('Clinic not found');
+};
+
+standeeRoutes.get('/', requireRole(ROLES.FIELD_AGENT, ROLES.EXEC_ADMIN, ROLES.SUPER_ADMIN), validate({
+  query: z.object({ status: z.enum(Object.values(STANDEE_STATUS)).optional() }),
+}), asyncHandler(async (req, res) => {
   const scope = scopeFilter(req.user);
   const filter = {};
   if (req.query.status) filter.status = req.query.status;
@@ -83,11 +95,18 @@ standeeRoutes.get('/', asyncHandler(async (req, res) => {
 standeeRoutes.post(
   '/:serialId/deploy',
   requireRole(ROLES.FIELD_AGENT, ROLES.EXEC_ADMIN, ROLES.SUPER_ADMIN),
-  validate({ body: z.object({ hospitalId: z.string(), doctorId: z.string().optional() }) }),
+  validate({ body: z.object({ hospitalId: z.string().regex(/^[a-f0-9]{24}$/i), doctorId: z.string().regex(/^[a-f0-9]{24}$/i).optional() }) }),
   asyncHandler(async (req, res) => {
     const standee = await QRStandee.findOne({ serialId: req.params.serialId.toUpperCase() });
     if (!standee) throw notFound('Standee not found');
     if (standee.status === STANDEE_STATUS.DEPLOYED) throw conflict('This standee is already deployed');
+    await assertStandeeClinic(req.user, req.body.hospitalId);
+    if (req.body.doctorId) {
+      const doctor = await Doctor.findById(req.body.doctorId).select('hospitalId').lean();
+      if (!doctor || String(doctor.hospitalId) !== String(req.body.hospitalId)) {
+        throw validationError([{ path: 'doctorId', message: 'That doctor does not practise at this clinic' }]);
+      }
+    }
 
     await QRStandee.updateOne(
       { _id: standee._id },
@@ -154,10 +173,11 @@ standeeRoutes.post(
     if (scoped && String(standee.hospitalId) !== String(req.user.hospitalId)) {
       throw notFound('Standee not found');
     }
+    if (req.user.role === ROLES.EXEC_ADMIN) await assertStandeeClinic(req.user, standee.hospitalId);
     if (req.body.doctorId) {
       const doctor = await Doctor.findById(req.body.doctorId).lean();
       if (!doctor || String(doctor.hospitalId) !== String(standee.hospitalId)) {
-        throw validationError('That doctor does not practise at this clinic');
+        throw validationError([{ path: 'doctorId', message: 'That doctor does not practise at this clinic' }]);
       }
     }
     await QRStandee.updateOne(
@@ -176,9 +196,11 @@ standeeRoutes.post(
 standeeRoutes.post(
   '/:serialId/reclaim',
   requireRole(ROLES.FIELD_AGENT, ROLES.EXEC_ADMIN, ROLES.SUPER_ADMIN),
+  validate({ body: z.object({ reason: z.string().trim().max(200).optional() }).optional() }),
   asyncHandler(async (req, res) => {
     const standee = await QRStandee.findOne({ serialId: req.params.serialId.toUpperCase() });
     if (!standee) throw notFound('Standee not found');
+    await assertStandeeClinic(req.user, standee.hospitalId);
     await QRStandee.updateOne(
       { _id: standee._id },
       {

@@ -30,7 +30,8 @@ const run = async () => {
   const old = await OPDToken.find({ doctorId: doctor._id, date }).select('_id').lean();
   await Transaction.deleteMany({ tokenId: { $in: old.map((o) => o._id) } });
   await OPDToken.deleteMany({ doctorId: doctor._id, date });
-  await Counter.deleteOne({ _id: `token:${doctor._id}:${date}` });
+  // Every counter for the day: walk-ins now count per sitting (token:<doc>:<date>:<SHIFT>).
+  await Counter.deleteMany({ _id: new RegExp(`^token:${doctor._id}:${date}`) });
   await Doctor.updateOne({ _id: doctor._id }, { $set: { 'session.isBookingOpen': true } });
 
   const actor = { id: String(receptionist._id), role: ROLES.RECEPTIONIST, hospitalId: String(hospital._id) };
@@ -94,7 +95,8 @@ const run = async () => {
   await Transaction.deleteMany({ tokenId: { $in: created.map((c) => c._id) } });
   await OPDToken.deleteMany({ doctorId: doctor._id, date });
   await User.deleteMany({ name: /^Concurrent Patient / });
-  await Counter.deleteOne({ _id: `token:${doctor._id}:${date}` });
+  // Every counter for the day: walk-ins now count per sitting (token:<doc>:<date>:<SHIFT>).
+  await Counter.deleteMany({ _id: new RegExp(`^token:${doctor._id}:${date}`) });
   await Doctor.updateOne({ _id: doctor._id }, { $set: { 'session.isBookingOpen': false } });
 
   await mongoose.disconnect();

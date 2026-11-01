@@ -3,10 +3,9 @@ import { z } from 'zod';
 import { WaSettings, District, User, Hospital, Doctor, OPDToken, Transaction } from '../../models/index.js';
 import { asyncHandler } from '../../lib/asyncHandler.js';
 import { validate } from '../../middleware/validate.js';
-import { requireAuth, requireActiveUser } from '../../middleware/auth.js';
+import { requireAuth, requireActiveUser, forbidImpersonation } from '../../middleware/auth.js';
 import { requireRole } from '../../middleware/rbac.js';
 import { getWaSettings, bustWaSettingsCache, getDriver } from '../../lib/providers/index.js';
-import { hashPassword } from '../auth/service.js';
 import { writeAuditLog } from '../../lib/auditLog.js';
 import { notFound, validationError } from '../../lib/errors.js';
 import { ROLES, NETWORK_STATE, TOKEN_STATUS, AUDIT_ACTIONS, VISIT_TYPE, TOKEN_SOURCE } from '../../config/constants.js';
@@ -118,31 +117,6 @@ superadminRoutes.post(
   }),
 );
 
-// ---- Staff provisioning ----
-superadminRoutes.post(
-  '/users',
-  validate({
-    body: z.object({
-      phone: z.string().min(10).max(12),
-      name: z.string().min(2).max(80),
-      role: z.enum([ROLES.EXEC_ADMIN, ROLES.FIELD_AGENT, ROLES.RECEPTIONIST, ROLES.SUPER_ADMIN]),
-      email: z.string().email().optional(),
-      password: z.string().min(8).max(72),
-      districtId: z.string().optional(),
-      hospitalId: z.string().optional(),
-    }),
-  }),
-  asyncHandler(async (req, res) => {
-    const { password, ...rest } = req.body;
-    const user = await User.create({ ...rest, passwordHash: await hashPassword(password), createdBy: req.user.id });
-    writeAuditLog({
-      actorId: req.user.id, actorRole: req.user.role, action: AUDIT_ACTIONS.USER_CREATED,
-      entityType: 'User', entityId: user._id, after: { role: user.role, phone: user.phone },
-    });
-    res.status(201).json({ ok: true, data: user.toSafeJSON() });
-  }),
-);
-
 // ---- Staff administration ----
 const meta = (req) => ({ actor: req.user, ip: req.ip, userAgent: req.headers['user-agent'] });
 
@@ -186,6 +160,11 @@ superadminRoutes.patch(
     res.json({ ok: true, data: await staff.updateStaff({ userId: req.params.id, patch: req.body, ...meta(req) }) });
   }),
 );
+
+// Sign in as another user. Not available from inside such a session.
+superadminRoutes.post('/impersonate/:id', forbidImpersonation, asyncHandler(async (req, res) => {
+  res.json({ ok: true, data: await staff.impersonate({ userId: req.params.id, ...meta(req) }) });
+}));
 
 superadminRoutes.post(
   '/staff/:id/password',

@@ -1,5 +1,5 @@
 import { Doctor, Hospital, Specialty, toSlug } from '../../models/index.js';
-import { findNearbyDoctors, suggestSearch, listCities, searchPlaces } from '../../services/nearbySearch.js';
+import { findNearbyDoctors, suggestSearch, listCities, searchPlaces, resolveSearchPlace } from '../../services/nearbySearch.js';
 import { assertUploadable, processAvatar, putObject, deleteObject } from '../../services/storage.js';
 import { notFound, forbidden, conflict } from '../../lib/errors.js';
 import { writeAuditLog } from '../../lib/auditLog.js';
@@ -16,6 +16,12 @@ export const suggest = (params) => suggestSearch(params);
 export const cities = () => listCities();
 
 export const places = (params) => searchPlaces(params);
+
+export const resolvePlace = async (placeId) => {
+  const place = await resolveSearchPlace(placeId);
+  if (!place) throw notFound('That place could not be found — pick another');
+  return place;
+};
 
 /**
  * Specialties a patient can actually filter by.
@@ -68,7 +74,7 @@ export const list = async (actor) => {
 export const updateFees = async ({ doctorId, fees, actor }) => {
   const doctor = await Doctor.findById(doctorId);
   if (!doctor) throw notFound('Doctor not found');
-  assertDoctorScope(actor, doctor, { selfOnly: false });
+  await assertDoctorScope(actor, doctor, { selfOnly: false });
   await Doctor.updateOne({ _id: doctor._id }, { $set: { fees } });
   return Doctor.findById(doctor._id).lean();
 };
@@ -84,7 +90,7 @@ export const updateFees = async ({ doctorId, fees, actor }) => {
 export const setPhoto = async ({ doctorId, file, actor }) => {
   const doctor = await Doctor.findById(doctorId);
   if (!doctor) throw notFound('Doctor not found');
-  assertDoctorScope(actor, doctor, { selfOnly: false });
+  await assertDoctorScope(actor, doctor, { selfOnly: false });
 
   assertUploadable(file);
   const processed = await processAvatar(file.buffer);
@@ -103,7 +109,7 @@ export const setPhoto = async ({ doctorId, file, actor }) => {
 export const removePhoto = async ({ doctorId, actor }) => {
   const doctor = await Doctor.findById(doctorId);
   if (!doctor) throw notFound('Doctor not found');
-  assertDoctorScope(actor, doctor, { selfOnly: false });
+  await assertDoctorScope(actor, doctor, { selfOnly: false });
 
   const previous = doctor.photo?.objectPath ?? null;
   await Doctor.updateOne(
@@ -117,7 +123,7 @@ export const removePhoto = async ({ doctorId, actor }) => {
 export const updateProfile = async ({ doctorId, patch, actor }) => {
   const doctor = await Doctor.findById(doctorId);
   if (!doctor) throw notFound('Doctor not found');
-  assertDoctorScope(actor, doctor, { selfOnly: false });
+  await assertDoctorScope(actor, doctor, { selfOnly: false });
 
   const next = { ...patch };
 

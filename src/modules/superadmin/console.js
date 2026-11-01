@@ -21,13 +21,17 @@ export const getConsole = async () => {
   const last7 = Array.from({ length: 7 }, (_, i) => dayOffset(6 - i));
   const monthStart = today.slice(0, 8) + '01';
 
-  const [hospitals, doctors, agents, executives, submissions, districts] = await Promise.all([
+  const [hospitals, doctors, agents, executives, submissions, districts, deskUsers] = await Promise.all([
     Hospital.find().populate('districtId', 'name code').lean(),
     Doctor.find().lean(),
     User.find({ role: ROLES.FIELD_AGENT }).populate('districtId', 'name code').lean(),
     User.find({ role: ROLES.EXEC_ADMIN }).populate('districtId', 'name code').lean(),
     OnboardingSubmission.find().populate('agentId', 'name').lean(),
     District.find().lean(),
+    // Each clinic's own logins besides its doctors, so the directory can reset
+    // their passwords or sign in as them.
+    User.find({ role: { $in: [ROLES.RECEPTIONIST, ROLES.PHARMACIST] }, hospitalId: { $ne: null } })
+      .select('name phone role hospitalId isActive').lean(),
   ]);
 
   const hospitalIds = hospitals.map((h) => h._id);
@@ -104,6 +108,8 @@ export const getConsole = async () => {
     return {
       id: String(d._id),
       hospitalId: String(d.hospitalId),
+      // The doctor's login, for password reset and "Login as".
+      userId: d.userId ? String(d.userId) : null,
       doctorName: d.name,
       // So the admin drawer can show the current photo without another fetch.
       photoUrl: d.photo?.url ?? null,
@@ -233,6 +239,9 @@ export const getConsole = async () => {
       deboardedAt: h.deboardedAt ?? null,
       createdAt: h.createdAt,
       doctors: mine,
+      logins: deskUsers
+        .filter((u) => String(u.hospitalId) === String(h._id))
+        .map((u) => ({ id: String(u._id), name: u.name, phone: u.phone, role: u.role, isActive: u.isActive })),
     };
   });
 

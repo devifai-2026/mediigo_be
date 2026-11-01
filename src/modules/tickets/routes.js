@@ -30,9 +30,21 @@ ticketRoutes.post(
   }),
 );
 
-ticketRoutes.get('/', asyncHandler(async (req, res) => {
-  res.json({ ok: true, data: await service.listTickets({ actor: req.user, ...req.query }) });
-}));
+ticketRoutes.get(
+  '/',
+  // Validated: raw values let operators like status[$ne] into the filter.
+  validate({
+    query: z.object({
+      status: z.enum(Object.values(TICKET_STATUS)).optional(),
+      priority: z.enum(Object.values(TICKET_PRIORITY)).optional(),
+      search: z.string().max(80).optional(),
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    const { status, priority, search } = req.query;
+    res.json({ ok: true, data: await service.listTickets({ actor: req.user, status, priority, search }) });
+  }),
+);
 
 ticketRoutes.get('/summary', asyncHandler(async (req, res) => {
   res.json({ ok: true, data: await service.ticketSummary(req.user) });
@@ -42,8 +54,9 @@ ticketRoutes.get('/summary', asyncHandler(async (req, res) => {
 ticketRoutes.get(
   '/system-log',
   requireRole(ROLES.EXEC_ADMIN, ROLES.SUPER_ADMIN),
+  validate({ query: z.object({ action: z.string().max(60).regex(/^[A-Z_]+$/).optional(), limit: z.coerce.number().int().min(1).max(500).optional() }) }),
   asyncHandler(async (req, res) => {
-    res.json({ ok: true, data: await service.systemLog({ actor: req.user, action: req.query.action, limit: Number(req.query.limit) || 200 }) });
+    res.json({ ok: true, data: await service.systemLog({ actor: req.user, action: req.query.action, limit: req.query.limit || 200 }) });
   }),
 );
 
