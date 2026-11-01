@@ -10,6 +10,8 @@
  * "is this doctor sitting then?" rather than three that can disagree.
  */
 import { Doctor } from '../models/Doctor.js';
+import { Counter } from '../models/Counter.js';
+import { tokenCounterId } from '../lib/counters.js';
 import { OPDToken } from '../models/OPDToken.js';
 import { clinicDate, tzOffsetMinutes } from '../lib/dates.js';
 import { BOOKING_HORIZON_DAYS, SHIFT, TOKEN_STATUS } from '../config/constants.js';
@@ -301,14 +303,34 @@ export const sittingSlots = async ({ doctor, timezone, date, shift, now = new Da
 
   const today = clinicDate(timezone, now);
   const nowMins = date === today ? minutesNow(timezone, now) : -1;
+  const started = date === today && nowMins >= start;
 
-  const slots = Array.from({ length: capacity }, (_, i) => {
+  // The number the desk would hand out next: the sitting's own counter, past
+  // anything already taken. Numbers are one series for walk-ins and app
+  // bookings alike — offering slots by clock time instead (#39 because 11 PM
+  // is #39's estimated slot) broke that series right after the desk issued #1
+  // and #2.
+  const counter = await Counter.findById(tokenCounterId(doctor._id, date, shift)).lean();
+  let next = Math.max(counter?.seq ?? 0, reached) + 1;
+  while (taken.has(next)) next += 1;
+
+  const active = new Set(tokens
+    .filter((t) => [TOKEN_STATUS.WAITING, TOKEN_STATUS.IN_CHAMBER].includes(t.status))
+    .map((t) => t.tokenNumber));
+
+  let ahead = 0; // people (booked, or free numbers someone may take) before this number
+  const slots = Array.from({ length: Math.max(capacity, next) }, (_, i) => {
     const number = i + 1;
-    const at = start + i * avg;
     let status = 'free';
     if (taken.has(number)) status = 'taken';
-    else if (date === today && (number <= reached || at + avg <= nowMins)) status = 'past';
-    return { number, time: fromMinutes(at), status };
+    // Below the next number and never taken: the queue has moved past it.
+    else if (number < next) status = 'past';
+    // Once the sitting is under way, expect each number from now, after
+    // everyone ahead of it; before that, from the opening time.
+    const at = started ? nowMins + ahead * avg : start + i * avg;
+    if (status === 'free' && at >= end) status = 'full';
+    if (status === 'free' || active.has(number)) ahead += 1;
+    return { number, time: fromMinutes(Math.min(at, 24 * 60 - 1)), status };
   });
 
   return {
@@ -320,8 +342,8 @@ export const sittingSlots = async ({ doctor, timezone, date, shift, now = new Da
     capacity,
     capped: sitting.maxTokens != null,
     slots,
-    // What the patient gets without choosing: the first free number.
-    suggested: slots.find((s) => s.status === 'free')?.number ?? null,
+    // What the patient gets without choosing: the next number in the series.
+    suggested: slots.find((s) => s.status === 'free' && s.number >= next)?.number ?? null,
   };
 };
 
