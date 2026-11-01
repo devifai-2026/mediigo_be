@@ -14,6 +14,18 @@ const escapeRegex = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const stripTitle = (s) => String(s || '').replace(/^\s*(dr|doctor)\.?\s+/i, '');
 
 /**
+ * The search term as a pattern that ignores the doctor's title and spacing.
+ * Picking a suggestion fills the box with the stored name ("Dr. Rohit
+ * jadhav"); matching that literally failed whenever the stored name was
+ * spaced or titled even slightly differently, while typing "Rohit jadhav"
+ * worked. The title is dropped and any run of spaces matches any run.
+ */
+const searchPattern = (search) => {
+  const words = stripTitle(String(search).trim()).split(/\s+/).filter(Boolean).map(escapeRegex);
+  return words.length ? new RegExp(words.join('\\s+'), 'i') : null;
+};
+
+/**
  * Nearby doctor discovery.
  *
  * $geoNear must be the first aggregation stage. It returns the distance for
@@ -27,7 +39,7 @@ export const findNearbyDoctors = async ({ lng, lat, radiusKm, specialty, search,
   const radius = anyDistance ? null : Math.min(radiusKm || env.NEARBY_DEFAULT_RADIUS_KM, env.NEARBY_MAX_RADIUS_KM);
   // One compiled pattern reused by every $regexMatch below. Built once so the
   // term is escaped in exactly one place.
-  const searchRe = search ? new RegExp(escapeRegex(String(search).trim()), 'i') : null;
+  const searchRe = search ? searchPattern(search) : null;
 
   const hospitals = await Hospital.aggregate([
     {
@@ -48,7 +60,7 @@ export const findNearbyDoctors = async ({ lng, lat, radiusKm, specialty, search,
     // doctor's. Without this the term was only ever matched against doctors.
     {
       $addFields: {
-        clinicMatches: search
+        clinicMatches: searchRe
           ? {
             $or: [
               { $regexMatch: { input: { $ifNull: ['$name', ''] }, regex: searchRe } },
@@ -72,7 +84,7 @@ export const findNearbyDoctors = async ({ lng, lat, radiusKm, specialty, search,
                   // When the clinic itself matched, keep every doctor there.
                   // Otherwise fall back to matching the doctor's own name or
                   // specialty, which is the pre-existing behaviour.
-                  search
+                  searchRe
                     ? {
                       $or: [
                         '$$clinicHit',
