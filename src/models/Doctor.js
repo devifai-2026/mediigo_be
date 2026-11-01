@@ -59,6 +59,13 @@ const doctorSchema = new mongoose.Schema(
      * it in the bucket. Null until someone uploads one — the card falls back to
      * initials, so a doctor without a photo is never a broken image.
      */
+    // Aadhaar, PAN and registration certificate. Private objects: read only
+    // through the authenticated document routes, never a public URL.
+    kycDocuments: {
+      type: [{ _id: false, type: { type: String }, objectPath: String, uploadedAt: Date }],
+      default: [],
+      select: false,
+    },
     photo: {
       url: { type: String, default: null },
       objectPath: { type: String, default: null },

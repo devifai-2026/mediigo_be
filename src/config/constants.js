@@ -56,6 +56,11 @@ export const BOOKING_HORIZON_DAYS = 7;
 
 // A named half of the day. Shifts carry real times; this labels them so a
 // patient reading "Morning" and a doctor marking one off mean the same thing.
+// Identity and registration papers every onboarded doctor must provide.
+// Stored privately (never a public URL): see services/storage.js.
+export const DOCTOR_DOC_TYPES = ['AADHAAR', 'PAN', 'REG_CERT'];
+export const DOCTOR_DOC_LABEL = { AADHAAR: 'Aadhaar card', PAN: 'PAN card', REG_CERT: 'Medical registration certificate' };
+
 export const SHIFT = {
   MORNING: 'MORNING',
   AFTERNOON: 'AFTERNOON',

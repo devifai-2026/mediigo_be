@@ -6,7 +6,7 @@ import { assertSubmissionScope, scopeFilter } from '../../middleware/rbac.js';
 import { emitSubmissionStatus } from '../../realtime/emitters.js';
 import { assertLeadOnboardable } from './leads.js';
 import { hashPassword } from '../auth/service.js';
-import { SUBMISSION_STATUS, ROLES } from '../../config/constants.js';
+import { SUBMISSION_STATUS, ROLES, DOCTOR_DOC_TYPES, DOCTOR_DOC_LABEL } from '../../config/constants.js';
 
 /**
  * Apply the agent's sign-in choice. The password arrives in plain text once
@@ -117,6 +117,17 @@ export const submit = async ({ id, actor }) => {
       const takenReg = await Doctor.findOne({ councilRegNo: { $in: doctors.map((d) => d.councilRegNo) } }).select('councilRegNo').lean();
       if (takenReg) throw conflict(`A doctor with registration ${takenReg.councilRegNo} is already on Mediigo`);
       if (doctors.filter((d) => d.isClinicAdmin).length > 1) throw conflict('Only one doctor can be the clinic admin');
+      // Every doctor's Aadhaar, PAN and registration certificate, before review.
+      doctors.forEach((d, i) => {
+        const have = new Set((d.documents || []).map((x) => x.type));
+        const missing = DOCTOR_DOC_TYPES.filter((t) => !have.has(t));
+        if (missing.length) {
+          throw validationError([{
+            path: `payload.doctors.${i}.documents`,
+            message: `${d.name || `Doctor ${i + 1}`}: upload the ${missing.map((t) => DOCTOR_DOC_LABEL[t]).join(', ')}`,
+          }]);
+        }
+      });
     }
     sub.payload = { ...p, ...extras.data };
     sub.markModified('payload');

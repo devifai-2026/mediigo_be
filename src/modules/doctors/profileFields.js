@@ -1,3 +1,4 @@
+import { DOCTOR_DOC_TYPES } from '../../config/constants.js';
 import { z } from 'zod';
 
 /**
@@ -117,6 +118,12 @@ export const clinicDoctorSchema = doctorPayloadSchema.omit({ hospitalId: true })
   // Sees the whole clinic's revenue and footfall, not just their own.
   isClinicAdmin: z.boolean().optional().default(false),
   photo: photoRef.nullable().optional(),
+  // Aadhaar, PAN and registration certificate, uploaded privately; only the
+  // storage keys travel in the payload. Required at submit (see submit()).
+  documents: z.array(z.object({
+    type: z.enum(DOCTOR_DOC_TYPES),
+    objectPath: z.string().regex(/^kyc\//, 'Upload the document again'),
+  })).max(DOCTOR_DOC_TYPES.length).optional(),
 });
 
 export const clinicExtrasSchema = z.object({

@@ -11,6 +11,7 @@ import { validate } from '../../middleware/validate.js';
 import { requireAuth, requireActiveUser } from '../../middleware/auth.js';
 import { requireRole } from '../../middleware/rbac.js';
 import { ROLES, SUBMISSION_STATUS } from '../../config/constants.js';
+import { assertDocType, storeDocument, readDocument, assertOnboardingDocAccess } from '../../services/kyc.js';
 
 export const onboardingRoutes = Router();
 
@@ -102,6 +103,29 @@ onboardingRoutes.post(
     const processed = req.query.kind === 'avatar' ? await processAvatar(req.file.buffer) : await processPhoto(req.file.buffer);
     const stored = await putObject({ ...processed, prefix: `onboarding/${req.user.id}` });
     res.status(201).json({ ok: true, data: stored });
+  }),
+);
+
+// A doctor's Aadhaar / PAN / registration certificate, captured during
+// onboarding. Stored privately; the response is a storage key, never a URL.
+onboardingRoutes.post(
+  '/documents',
+  requireRole(ROLES.FIELD_AGENT, ROLES.EXEC_ADMIN, ROLES.SUPER_ADMIN),
+  upload.single('photo'),
+  asyncHandler(async (req, res) => {
+    const type = assertDocType(String(req.query.type || ''));
+    const objectPath = await storeDocument(req.file, `kyc/${req.user.id}`);
+    res.status(201).json({ ok: true, data: { type, objectPath } });
+  }),
+);
+onboardingRoutes.get(
+  '/documents/file',
+  requireRole(ROLES.FIELD_AGENT, ROLES.EXEC_ADMIN, ROLES.SUPER_ADMIN),
+  validate({ query: z.object({ path: z.string().regex(/^kyc\/[\w./-]+$/).max(200) }) }),
+  asyncHandler(async (req, res) => {
+    await assertOnboardingDocAccess(req.user, req.query.path);
+    const { buf, contentType } = await readDocument(req.query.path);
+    res.set({ 'Content-Type': contentType, 'Cache-Control': 'private, no-store' }).send(buf);
   }),
 );
 

@@ -5,7 +5,11 @@ import { asyncHandler } from '../../lib/asyncHandler.js';
 import { validate } from '../../middleware/validate.js';
 import { requireAuth, optionalAuth, requireActiveUser } from '../../middleware/auth.js';
 import { requireRole } from '../../middleware/rbac.js';
-import { ROLES } from '../../config/constants.js';
+import { ROLES, DOCTOR_DOC_TYPES, DOCTOR_DOC_LABEL } from '../../config/constants.js';
+import { assertDocType, storeDocument, readDocument, loadDoctorForDocs } from '../../services/kyc.js';
+import { Doctor } from '../../models/index.js';
+import { notFound } from '../../lib/errors.js';
+import { writeAuditLog } from '../../lib/auditLog.js';
 import { nearbySchema, slotsSchema, suggestSchema, placeResolveSchema, feesSchema, profileSchema, scheduleSchema, markOffSchema } from './schema.js';
 
 export const doctorRoutes = Router();
@@ -45,6 +49,48 @@ doctorRoutes.get(
 );
 // Public: profile URLs for the website's sitemap.xml (served by the frontend host).
 doctorRoutes.get('/sitemap', asyncHandler(controller.sitemap));
+// ---- Verification documents (Aadhaar, PAN, registration certificate) ----
+// The doctor, their district admin and Super Admin may see them; the doctor
+// or Super Admin may replace one. Never the front desk, never a public URL.
+doctorRoutes.get('/:id/documents', requireAuth, asyncHandler(requireActiveUser), asyncHandler(async (req, res) => {
+  const doctor = await loadDoctorForDocs(req.user, req.params.id);
+  const byType = new Map((doctor.kycDocuments || []).map((d) => [d.type, d]));
+  res.json({
+    ok: true,
+    data: DOCTOR_DOC_TYPES.map((type) => ({
+      type,
+      label: DOCTOR_DOC_LABEL[type],
+      uploaded: byType.has(type),
+      uploadedAt: byType.get(type)?.uploadedAt ?? null,
+    })),
+  });
+}));
+doctorRoutes.get('/:id/documents/:type/file', requireAuth, asyncHandler(requireActiveUser), asyncHandler(async (req, res) => {
+  const type = assertDocType(req.params.type);
+  const doctor = await loadDoctorForDocs(req.user, req.params.id);
+  const doc = (doctor.kycDocuments || []).find((d) => d.type === type);
+  if (!doc) throw notFound('Not uploaded yet');
+  const { buf, contentType } = await readDocument(doc.objectPath);
+  res.set({ 'Content-Type': contentType, 'Cache-Control': 'private, no-store' }).send(buf);
+}));
+doctorRoutes.put(
+  '/:id/documents/:type',
+  requireAuth, asyncHandler(requireActiveUser),
+  upload.single('photo'),
+  asyncHandler(async (req, res) => {
+    const type = assertDocType(req.params.type);
+    const doctor = await loadDoctorForDocs(req.user, req.params.id, { write: true });
+    const objectPath = await storeDocument(req.file, `kyc/doctor-${doctor._id}`);
+    const rest = (doctor.kycDocuments || []).filter((d) => d.type !== type);
+    await Doctor.updateOne({ _id: doctor._id }, { $set: { kycDocuments: [...rest, { type, objectPath, uploadedAt: new Date() }] } });
+    writeAuditLog({
+      actorId: req.user.id, actorRole: req.user.role, action: 'DOCTOR_DOCUMENT_UPDATED',
+      entityType: 'Doctor', entityId: doctor._id, hospitalId: doctor.hospitalId, after: { type },
+    });
+    res.json({ ok: true, data: { type, uploaded: true, uploadedAt: new Date() } });
+  }),
+);
+
 doctorRoutes.get('/:id', optionalAuth, asyncHandler(controller.getById));
 
 doctorRoutes.patch(

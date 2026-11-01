@@ -194,7 +194,7 @@ export const approveSubmission = async ({ submissionId, actor, ip, userAgent, pa
           if (!parsed.success) {
             throw validationError(parsed.error.issues.map((i) => ({ path: `payload.doctors.${i.path.join('.')}`, message: i.message })));
           }
-          const { phone, email, photo, isClinicAdmin, ...profile } = parsed.data;
+          const { phone, email, photo, isClinicAdmin, documents, ...profile } = parsed.data;
           // eslint-disable-next-line no-await-in-loop
           const { passwordHash, tempPassword, signIn } = await secretFor(phone);
           const name = withDoctorTitle(profile.name);
@@ -217,6 +217,7 @@ export const approveSubmission = async ({ submissionId, actor, ip, userAgent, pa
               userId: user._id,
               hospitalId: hospital._id,
               isClinicAdmin: Boolean(isClinicAdmin),
+              kycDocuments: (documents || []).map((x) => ({ type: x.type, objectPath: x.objectPath, uploadedAt: new Date() })),
               schedule,
               ...(p.opd?.avgConsultMinutes ? { avgConsultMinutes: p.opd.avgConsultMinutes } : {}),
               ...(photo?.url ? { photo: { url: photo.url, objectPath: photo.objectPath ?? null, updatedAt: new Date() } } : {}),
