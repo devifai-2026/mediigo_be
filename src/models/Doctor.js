@@ -132,7 +132,8 @@ const doctorSchema = new mongoose.Schema(
     scheduleOverrides: [
       {
         date: { type: String, required: true }, // YYYY-MM-DD
-        kind: { type: String, enum: ['off', 'extra'], required: true },
+        // off: closed · extra: a one-off sitting · extend: this sitting ends later today
+        kind: { type: String, enum: ['off', 'extra', 'extend'], required: true },
         shift: { type: String, enum: Object.values(SHIFT), default: null },
         startTime: String,
         endTime: String,

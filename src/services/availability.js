@@ -84,8 +84,16 @@ export const shiftsOn = (doctor, date) => {
       source: 'extra',
     }));
 
+  // A sitting extended for this date ends later (the desk's "+30 min").
+  const extendedTo = new Map(overrides
+    .filter((o) => o.kind === 'extend' && o.shift && o.endTime)
+    .map((o) => [o.shift, o.endTime]));
+
   return [...recurring, ...extras]
     .filter((s) => !offShifts.has(s.shift))
+    .map((s) => (extendedTo.has(s.shift) && toMinutes(extendedTo.get(s.shift)) > toMinutes(s.endTime)
+      ? { ...s, endTime: extendedTo.get(s.shift), extended: true }
+      : s))
     .sort((a, b) => toMinutes(a.startTime) - toMinutes(b.startTime));
 };
 

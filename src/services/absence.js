@@ -11,9 +11,9 @@ import { conflict, notFound } from '../lib/errors.js';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { clinicDate, endOfClinicDay } from '../lib/dates.js';
 import { TOKEN_STATUS, BOOKING_HORIZON_DAYS } from '../config/constants.js';
-import { bookableDates, shiftsOn, resolveBookableShift, doctorAvailability, allocateTokenNumber } from './availability.js';
+import { bookableDates, shiftsOn, resolveBookableShift, doctorAvailability, allocateTokenNumber, toMinutes } from './availability.js';
 import { emitQueueSnapshot } from '../realtime/emitters.js';
-import { assertTokenScope } from '../middleware/rbac.js';
+import { assertTokenScope, assertDoctorScope } from '../middleware/rbac.js';
 import { assertNoOpenToken } from '../modules/queue/service.js';
 
 /**
@@ -188,4 +188,55 @@ export const rescheduleOptions = async ({ tokenId, actor }) => {
     from: { date: token.date, shift: token.shift },
     days: days.filter((d) => d.isOpen),
   };
+};
+
+const hhmm = (mins) => `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
+const LAST_MINUTE = 23 * 60 + 59;
+
+/**
+ * Keep today's sitting open longer: +15 min, +30 min, +1 hour on top of its
+ * current end. Stored as a date-only override, so the weekly timetable is
+ * untouched and tomorrow is back to normal. App booking, walk-ins, "Now" and
+ * wait estimates all read sittings through shiftsOn, so they follow at once.
+ * A sitting cannot run past midnight.
+ */
+export const extendSitting = async ({ doctorId, shift, minutes, actor }) => {
+  const doctor = await Doctor.findById(doctorId);
+  if (!doctor) throw notFound('Doctor not found');
+  await assertDoctorScope(actor, doctor);
+  const hospital = await Hospital.findById(doctor.hospitalId).select('timezone').lean();
+  const date = clinicDate(hospital?.timezone);
+
+  const sitting = shiftsOn(doctor, date).find((s) => s.shift === shift);
+  if (!sitting) throw notFound('The doctor has no such sitting today');
+  const current = toMinutes(sitting.endTime);
+  const to = Math.min(current + Number(minutes), LAST_MINUTE);
+  if (to <= current) throw conflict('This sitting already runs to the end of the day');
+
+  doctor.scheduleOverrides = (doctor.scheduleOverrides || [])
+    .filter((o) => !(o.date === date && o.kind === 'extend' && o.shift === shift));
+  doctor.scheduleOverrides.push({ date, kind: 'extend', shift, endTime: hhmm(to), createdBy: actor?.id ?? null });
+  await doctor.save();
+
+  writeAuditLog({
+    actorId: actor?.id, actorRole: actor?.role, action: 'SITTING_EXTENDED',
+    entityType: 'Doctor', entityId: doctor._id, hospitalId: doctor.hospitalId,
+    after: { date, shift, from: sitting.endTime, to: hhmm(to) },
+  });
+  await emitQueueSnapshot(doctor._id, date);
+  return { date, shift, endTime: hhmm(to), from: sitting.endTime };
+};
+
+/** Undo today's extension: the sitting ends at its usual time again. */
+export const clearSittingExtension = async ({ doctorId, shift, actor }) => {
+  const doctor = await Doctor.findById(doctorId);
+  if (!doctor) throw notFound('Doctor not found');
+  await assertDoctorScope(actor, doctor);
+  const hospital = await Hospital.findById(doctor.hospitalId).select('timezone').lean();
+  const date = clinicDate(hospital?.timezone);
+  doctor.scheduleOverrides = (doctor.scheduleOverrides || [])
+    .filter((o) => !(o.date === date && o.kind === 'extend' && o.shift === shift));
+  await doctor.save();
+  await emitQueueSnapshot(doctor._id, date);
+  return { date, shift, cleared: true };
 };

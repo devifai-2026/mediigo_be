@@ -5,7 +5,9 @@ import { asyncHandler } from '../../lib/asyncHandler.js';
 import { validate } from '../../middleware/validate.js';
 import { requireAuth, optionalAuth, requireActiveUser } from '../../middleware/auth.js';
 import { requireRole } from '../../middleware/rbac.js';
-import { ROLES, DOCTOR_DOC_TYPES, DOCTOR_DOC_LABEL } from '../../config/constants.js';
+import { z } from 'zod';
+import { ROLES, DOCTOR_DOC_TYPES, DOCTOR_DOC_LABEL, SHIFT } from '../../config/constants.js';
+import { extendSitting, clearSittingExtension } from '../../services/absence.js';
 import { assertDocType, storeDocument, readDocument, loadDoctorForDocs } from '../../services/kyc.js';
 import { Doctor } from '../../models/index.js';
 import { notFound } from '../../lib/errors.js';
@@ -149,6 +151,25 @@ doctorRoutes.post(
   requireAuth, asyncHandler(requireActiveUser),
   requireRole(ROLES.DOCTOR, ROLES.RECEPTIONIST, ROLES.EXEC_ADMIN, ROLES.SUPER_ADMIN),
   validate(markOffSchema), asyncHandler(controller.markOff),
+);
+// Keep today's sitting open longer (+15 / +30 / +60 min), or undo it.
+doctorRoutes.post(
+  '/:id/extend',
+  requireAuth, asyncHandler(requireActiveUser),
+  requireRole(ROLES.DOCTOR, ROLES.RECEPTIONIST, ROLES.EXEC_ADMIN, ROLES.SUPER_ADMIN),
+  validate({ body: z.object({ shift: z.enum(Object.values(SHIFT)), minutes: z.coerce.number().int().refine((m) => [15, 30, 60].includes(m), 'Extend by 15, 30 or 60 minutes') }) }),
+  asyncHandler(async (req, res) => {
+    res.json({ ok: true, data: await extendSitting({ doctorId: req.params.id, shift: req.body.shift, minutes: req.body.minutes, actor: req.user }) });
+  }),
+);
+doctorRoutes.post(
+  '/:id/extend/clear',
+  requireAuth, asyncHandler(requireActiveUser),
+  requireRole(ROLES.DOCTOR, ROLES.RECEPTIONIST, ROLES.EXEC_ADMIN, ROLES.SUPER_ADMIN),
+  validate({ body: z.object({ shift: z.enum(Object.values(SHIFT)) }) }),
+  asyncHandler(async (req, res) => {
+    res.json({ ok: true, data: await clearSittingExtension({ doctorId: req.params.id, shift: req.body.shift, actor: req.user }) });
+  }),
 );
 doctorRoutes.post(
   '/:id/off/clear',

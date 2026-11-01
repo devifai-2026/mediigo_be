@@ -81,6 +81,8 @@ queueRoutes.get(
               endTime: sh.endTime,
               maxTokens: sh.maxTokens,
               source: sh.source,
+              // Kept open later than usual for this date (desk's "extend").
+              extended: Boolean(sh.extended),
               booked: c.booked ?? 0,
               waiting: c.waiting ?? 0,
               completed: c.completed ?? 0,
