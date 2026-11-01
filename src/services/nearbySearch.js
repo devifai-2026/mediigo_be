@@ -1,4 +1,5 @@
-import { Hospital, Doctor, OPDToken, District } from '../models/index.js';
+import { Hospital, Doctor, OPDToken, District, Counter } from '../models/index.js';
+import { tokenCounterId } from '../lib/counters.js';
 import { distanceMatrix, geocodePlaces } from '../lib/providers/google-maps.js';
 import { suggestAddresses, resolvePlace, placesEnabled } from '../modules/onboarding/lookup.js';
 import { round1 } from '../lib/geo.js';
@@ -163,6 +164,13 @@ export const findNearbyDoctors = async ({ lng, lat, radiusKm, specialty, search,
   ]);
   const depthBy = new Map(depth.map((d) => [String(d._id), d]));
 
+  // The number the next same-day booking will actually get: the doctor's
+  // day counter plus one — the same counter booking and the desk allocate
+  // from. Estimating it as waiting + current + 1 ignored every token already
+  // completed, skipped or cancelled, so a busy afternoon showed #3 for #13.
+  const counters = await Counter.find({ _id: { $in: doctorIds.map((id) => tokenCounterId(id, date)) } }).lean();
+  const issuedBy = new Map(counters.map((c) => [c._id, c.seq ?? 0]));
+
   // Booked counts across the booking horizon, so each card can say when the
   // doctor next has room. Also one batched query; capped sittings need it.
   const tzOf = (h) => h.timezone || env.DEFAULT_TIMEZONE;
@@ -237,7 +245,7 @@ export const findNearbyDoctors = async ({ lng, lat, radiusKm, specialty, search,
         queue: {
           waiting,
           currentToken: q?.current ?? 0,
-          nextToken: waiting + (q?.current ?? 0) + 1,
+          nextToken: (issuedBy.get(tokenCounterId(d._id, date)) ?? 0) + 1,
           // Null while on break: publishing a countdown for a queue that is not
           // advancing would be a lie.
           estimatedWaitMinutes: onBreak ? null : waiting * (d.avgConsultMinutes || env.MINUTES_PER_CONSULT),
