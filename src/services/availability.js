@@ -137,6 +137,8 @@ export const doctorAvailability = async ({ doctor, timezone, now = new Date(), d
         isFull,
         isBookable: !ended && !isFull,
         endedToday: ended,
+        // Under way right now: the only time live queue numbers mean anything.
+        inProgress: date === today && !ended && toMinutes(s.startTime) <= nowMinutes,
       };
     });
 

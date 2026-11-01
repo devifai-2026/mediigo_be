@@ -221,6 +221,8 @@ export const findNearbyDoctors = async ({ lng, lat, radiusKm, specialty, search,
     for (const d of h.doctors) {
       const q = depthBy.get(String(d._id));
       const onBreak = Boolean(d.session?.isOnBreak);
+      const hasSchedule = (d.schedule || []).length > 0 || (d.scheduleOverrides || []).some((o) => o.kind === 'extra');
+      const next = nextAvailableSitting({ doctor: d, timezone: tzOf(h), booked });
       const waiting = q?.waiting ?? 0;
       rows.push({
         doctorId: String(d._id),
@@ -235,8 +237,14 @@ export const findNearbyDoctors = async ({ lng, lat, radiusKm, specialty, search,
         fees: d.fees,
         chamberNumber: d.chamberNumber,
         rating: { average: d.rating?.average ?? 0, count: d.rating?.count ?? 0 },
-        nextAvailable: nextAvailableSitting({ doctor: d, timezone: tzOf(h), booked }),
+        nextAvailable: next,
+        hasSchedule,
         session: {
+          // Seeing patients right now. With a weekly schedule that means a
+          // sitting is under way; the "accepting bookings" switch alone stays
+          // on overnight and made a closed clinic read "Now". Without one the
+          // switch is all there is.
+          isLiveNow: !onBreak && (hasSchedule ? Boolean(next?.inProgress) : Boolean(d.session?.isBookingOpen)),
           isBookingOpen: Boolean(d.session?.isBookingOpen),
           isOnBreak: onBreak,
           breakReason: d.session?.breakReason ?? null,
