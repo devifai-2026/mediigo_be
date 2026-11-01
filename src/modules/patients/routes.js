@@ -260,7 +260,7 @@ patientRoutes.get('/me/tokens', validate({ query: z.object({ status: statusList 
   const filter = { patientId: req.user.id };
   if (req.query.status) filter.status = { $in: req.query.status };
   const tokens = await OPDToken.find(filter)
-    .populate('doctorId', 'name specialty chamberNumber')
+    .populate('doctorId', 'name specialty chamberNumber avgConsultMinutes photo')
     .populate('hospitalId', 'name address contactPhone location')
     .sort({ date: -1, tokenNumber: -1 })
     .limit(100)
