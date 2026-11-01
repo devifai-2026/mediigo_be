@@ -19,6 +19,11 @@ export const doctorRoutes = Router();
 // step AND leave attacker-controlled content on disk. The limit is enforced
 // here as well as in the service so multer aborts a huge body mid-stream
 // rather than buffering all of it first.
+// Who may change a doctor's profile, fees, photo or weekly schedule. The
+// front desk reads them but does not edit them; it keeps the day-to-day
+// controls (bookings open/closed, marking a day off).
+const PROFILE_EDITORS = [ROLES.DOCTOR, ROLES.EXEC_ADMIN, ROLES.SUPER_ADMIN];
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 8 * 1024 * 1024, files: 1 },
@@ -96,7 +101,7 @@ doctorRoutes.get('/:id', optionalAuth, asyncHandler(controller.getById));
 doctorRoutes.patch(
   '/:id/fees',
   requireAuth, asyncHandler(requireActiveUser),
-  requireRole(ROLES.DOCTOR, ROLES.RECEPTIONIST, ROLES.EXEC_ADMIN, ROLES.SUPER_ADMIN),
+  requireRole(...PROFILE_EDITORS),
   validate(feesSchema), asyncHandler(controller.updateFees),
 );
 // The clinic's front desk keeps its doctors' profiles current, so
@@ -105,7 +110,7 @@ doctorRoutes.patch(
 doctorRoutes.patch(
   '/:id',
   requireAuth, asyncHandler(requireActiveUser),
-  requireRole(ROLES.DOCTOR, ROLES.RECEPTIONIST, ROLES.EXEC_ADMIN, ROLES.SUPER_ADMIN),
+  requireRole(...PROFILE_EDITORS),
   validate(profileSchema), asyncHandler(controller.updateProfile),
 );
 
@@ -116,13 +121,13 @@ doctorRoutes.patch(
 doctorRoutes.put(
   '/:id/photo',
   requireAuth, asyncHandler(requireActiveUser),
-  requireRole(ROLES.DOCTOR, ROLES.RECEPTIONIST, ROLES.EXEC_ADMIN, ROLES.SUPER_ADMIN),
+  requireRole(...PROFILE_EDITORS),
   upload.single('photo'), asyncHandler(controller.setPhoto),
 );
 doctorRoutes.delete(
   '/:id/photo',
   requireAuth, asyncHandler(requireActiveUser),
-  requireRole(ROLES.DOCTOR, ROLES.RECEPTIONIST, ROLES.EXEC_ADMIN, ROLES.SUPER_ADMIN),
+  requireRole(...PROFILE_EDITORS),
   asyncHandler(controller.removePhoto),
 );
 
@@ -134,7 +139,7 @@ doctorRoutes.get('/:id/slots', optionalAuth, validate(slotsSchema), asyncHandler
 doctorRoutes.put(
   '/:id/schedule',
   requireAuth, asyncHandler(requireActiveUser),
-  requireRole(ROLES.DOCTOR, ROLES.RECEPTIONIST, ROLES.EXEC_ADMIN, ROLES.SUPER_ADMIN),
+  requireRole(...PROFILE_EDITORS),
   validate(scheduleSchema), asyncHandler(controller.updateSchedule),
 );
 
