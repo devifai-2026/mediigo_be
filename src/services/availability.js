@@ -286,55 +286,31 @@ export const sittingSlots = async ({ doctor, timezone, date, shift, now = new Da
   const start = toMinutes(sitting.startTime);
   const end = toMinutes(sitting.endTime);
 
-  // Numbers are one series for the whole day: this sitting owns a block of
-  // it (see sittingBlock), and a number is taken whichever sitting used it.
-  const { base } = sittingBlock(doctor, date, shift);
-  const dayTokens = await OPDToken.find({ doctorId: doctor._id, date })
-    .select('tokenNumber status shift')
+  // One serial series per doctor per day. The grid shows this sitting's
+  // booked tokens and offers exactly the next serial number — never numbers
+  // further ahead, which left gaps in the series.
+  const tokens = await OPDToken.find({ doctorId: doctor._id, date, shift })
+    .select('tokenNumber status')
+    .sort({ tokenNumber: 1 })
     .lean();
-  const taken = new Set(dayTokens.map((t) => t.tokenNumber));
-  const tokens = dayTokens.filter((t) => t.shift === shift);
-  const maxTaken = tokens.reduce((m, t) => Math.max(m, t.tokenNumber), base - 1);
-  // The queue has reached the highest number already called or seen.
-  const reached = tokens
-    .filter((t) => t.status !== TOKEN_STATUS.WAITING && t.status !== TOKEN_STATUS.CANCELLED)
-    .reduce((m, t) => Math.max(m, t.tokenNumber), base - 1);
-
-  const fits = Math.max(1, Math.floor((end - start) / avg));
-  // Without a cap the sitting never refuses a booking, so there is always one
-  // more number after the last one taken.
-  const capacity = sitting.maxTokens ?? Math.max(fits, maxTaken - base + 2);
+  const next = await peekNextTokenNumber(doctor._id, date);
+  const live = tokens.filter((t) => t.status !== TOKEN_STATUS.CANCELLED && t.status !== TOKEN_STATUS.RESCHEDULE_NEEDED);
+  const capped = sitting.maxTokens != null && live.length >= sitting.maxTokens;
 
   const today = clinicDate(timezone, now);
   const nowMins = date === today ? minutesNow(timezone, now) : -1;
   const started = date === today && nowMins >= start;
+  // Everyone still to be seen in this sitting goes before the next number.
+  const ahead = tokens.filter((t) => [TOKEN_STATUS.WAITING, TOKEN_STATUS.IN_CHAMBER].includes(t.status)).length;
+  const done = live.length - ahead;
+  const nextAt = started ? nowMins + ahead * avg : start + (done + ahead) * avg;
 
-  // The number the desk would hand out next: this sitting's counter within
-  // its block, past anything taken — the same rule allocateTokenNumber uses,
-  // so the app and the desk never number a sitting differently.
-  const counter = await Counter.findById(tokenCounterId(doctor._id, date, shift)).lean();
-  let next = Math.max(base + (counter?.seq ?? 0), reached + 1);
-  while (taken.has(next)) next += 1;
-
-  const active = new Set(tokens
-    .filter((t) => [TOKEN_STATUS.WAITING, TOKEN_STATUS.IN_CHAMBER].includes(t.status))
-    .map((t) => t.tokenNumber));
-
-  let ahead = 0; // people (booked, or free numbers someone may take) before this number
-  const length = Math.max(capacity, next - base + 1);
-  const slots = Array.from({ length }, (_, i) => {
-    const number = base + i;
-    let status = 'free';
-    if (taken.has(number)) status = 'taken';
-    // Below the next number and never taken: the queue has moved past it.
-    else if (number < next) status = 'past';
-    // Once the sitting is under way, expect each number from now, after
-    // everyone ahead of it; before that, from the opening time.
-    const at = started ? nowMins + ahead * avg : start + i * avg;
-    if (status === 'free' && at >= end) status = 'full';
-    if (status === 'free' || active.has(number)) ahead += 1;
-    return { number, time: fromMinutes(Math.min(at, 24 * 60 - 1)), status };
-  });
+  const slots = tokens
+    .filter((t) => t.status !== TOKEN_STATUS.RESCHEDULE_NEEDED)
+    .map((t) => ({ number: t.tokenNumber, time: null, status: 'taken' }));
+  const nextStatus = capped ? 'full' : nextAt >= end ? 'full' : 'free';
+  slots.push({ number: next, time: fromMinutes(Math.min(nextAt, 24 * 60 - 1)), status: nextStatus });
+  const capacity = sitting.maxTokens ?? Math.max(1, Math.floor((end - start) / avg));
 
   return {
     date,
@@ -345,11 +321,11 @@ export const sittingSlots = async ({ doctor, timezone, date, shift, now = new Da
     capacity,
     capped: sitting.maxTokens != null,
     slots,
-    // The next number in the series, whatever the clock: what the desk issues
-    // to a patient standing there, even when online booking is full.
+    // The next serial number, whatever the clock: what the desk issues to a
+    // patient standing there, even when online booking is full.
     next,
-    // What the patient gets without choosing: the next number in the series.
-    suggested: slots.find((s) => s.status === 'free' && s.number >= next)?.number ?? null,
+    // What an app booking gets: the next serial number, while there is room.
+    suggested: nextStatus === 'free' ? next : null,
   };
 };
 
@@ -369,40 +345,32 @@ export const currentSitting = (doctor, date, timezone, now = new Date()) => {
 };
 
 /**
- * Token numbers run in ONE series per doctor per day: each sitting owns a
- * block of numbers in the day's order — morning #1–#24, evening from #25 —
- * so no two patients that day share a number and later sittings never get
- * lower numbers. A block is the sitting's cap, or as many consultations as
- * fit in it. Without sittings the series simply starts at 1.
+ * Token numbers are one plain series per doctor per day — #1, #2, #3 … in the
+ * order tokens are issued, whatever the sitting or the time. Walk-ins, app
+ * bookings, follow-ups and reschedules all take the next number from the same
+ * counter, past any number already used that day, so the series never repeats
+ * and never jumps ahead of the patients actually booked. (Calling order still
+ * follows the sittings: callNext sorts by sitting first.)
  */
-export const sittingBlock = (doctor, date, shift) => {
-  if (!shift) return { base: 1, size: null };
-  const avg = doctor.avgConsultMinutes || env.MINUTES_PER_CONSULT;
-  let base = 1;
-  for (const s of shiftsOn(doctor, date)) {
-    const size = s.maxTokens ?? Math.max(1, Math.floor((toMinutes(s.endTime) - toMinutes(s.startTime)) / avg));
-    if (s.shift === shift) return { base, size };
-    base += size;
-  }
-  return { base, size: null };
-};
-
-/**
- * The next token number for a sitting: its block's start plus the sitting's
- * own counter, past any number already used that day by anyone (a sitting
- * that overflowed its block, or a patient who picked a later number). Run
- * inside the allocating transaction — the counter serializes concurrent
- * bookings, which is what makes the day-wide check safe.
- */
-export const allocateTokenNumber = async ({ doctor, date, shift, session, expiresAt }) => {
-  const { base } = sittingBlock(doctor, date, shift);
+export const allocateTokenNumber = async ({ doctor, date, session, expiresAt }) => {
   for (;;) {
     // eslint-disable-next-line no-await-in-loop
-    const seq = await nextSequence(tokenCounterId(doctor._id, date, shift), session, { expiresAt });
-    const n = base + seq - 1;
+    const n = await nextSequence(tokenCounterId(doctor._id, date, null), session, { expiresAt });
     // eslint-disable-next-line no-await-in-loop
     if (!(await OPDToken.exists({ doctorId: doctor._id, date, tokenNumber: n }).session(session ?? null))) return n;
   }
+};
+
+/** The number allocateTokenNumber would issue next, without taking it. */
+export const peekNextTokenNumber = async (doctorId, date) => {
+  const [counter, used] = await Promise.all([
+    Counter.findById(tokenCounterId(doctorId, date, null)).lean(),
+    OPDToken.find({ doctorId, date }).select('tokenNumber').lean(),
+  ]);
+  const taken = new Set(used.map((t) => t.tokenNumber));
+  let next = (counter?.seq ?? 0) + 1;
+  while (taken.has(next)) next += 1;
+  return next;
 };
 
 /** Minutes since midnight now, in the clinic's timezone. */
