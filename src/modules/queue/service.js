@@ -34,9 +34,15 @@ const escapeRx = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
  */
 export const assertNoOpenToken = async ({ doctorId, date, patientId, familyMemberId = null, name = null, exceptId = null }, session) => {
   if (!patientId) return;
+  // The account holder is one person however the booking named them: the app
+  // sends their own SELF family entry, the desk sends none. Treat the two as
+  // the same patient, so neither path can add a second token for them.
+  const holder = await User.findById(patientId).select('familyMembers').session(session ?? null).lean();
+  const selfId = holder?.familyMembers?.find((m) => m.relation === 'SELF')?._id ?? null;
+  const isHolder = !familyMemberId || (selfId && String(familyMemberId) === String(selfId));
   const existing = await OPDToken.findOne({
     doctorId, date, patientId,
-    familyMemberId: familyMemberId || null,
+    familyMemberId: isHolder ? { $in: [null, ...(selfId ? [selfId] : [])] } : familyMemberId,
     status: { $in: OPEN_STATUSES },
     ...(name ? { 'patientSnapshot.name': new RegExp(`^\\s*${escapeRx(String(name).trim())}\\s*$`, 'i') } : {}),
     ...(exceptId ? { _id: { $ne: exceptId } } : {}),
