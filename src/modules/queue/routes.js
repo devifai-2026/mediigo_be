@@ -16,7 +16,7 @@ import {
 import {
   followUpOptions, scheduleFollowUp, respondToFollowUp, releaseFollowUp, listFollowUps,
 } from '../../services/followUps.js';
-import { shiftsOn, closureReason } from '../../services/availability.js';
+import { shiftsOn, closureReason, bookableDates } from '../../services/availability.js';
 import { clinicDate } from '../../lib/dates.js';
 import { forbidden } from '../../lib/errors.js';
 
@@ -36,12 +36,16 @@ const tokenParam = { params: z.object({ tokenId: objectId }).passthrough() };
 queueRoutes.get(
   '/roster/today',
   requireAuth, asyncHandler(requireActiveUser), requireRole(...DESK),
+  // ?date= lets the desk and the doctor look ahead (tomorrow's sittings and
+  // bookings), within the same window patients can book into.
+  validate(queryDate),
   asyncHandler(async (req, res) => {
     const hospitalId = req.user.hospitalId || req.query.hospitalId;
     if (!hospitalId) throw forbidden('No clinic in scope');
     const hospital = await Hospital.findById(hospitalId).select('name timezone').lean();
     if (!hospital) throw notFound('Clinic not found');
-    const date = clinicDate(hospital.timezone);
+    const window = bookableDates(hospital.timezone);
+    const date = req.query.date && window.includes(req.query.date) ? req.query.date : clinicDate(hospital.timezone);
 
     const doctors = await Doctor.find({ hospitalId, isActive: true })
       .select('name specialty chamberNumber photo.url session schedule scheduleOverrides avgConsultMinutes')
@@ -65,6 +69,8 @@ queueRoutes.get(
       ok: true,
       data: {
         date,
+        // The days that can be looked at, for the day picker.
+        dates: window,
         hospitalName: hospital.name,
         doctors: doctors.map((d) => {
           const shifts = shiftsOn(d, date).map((sh) => {

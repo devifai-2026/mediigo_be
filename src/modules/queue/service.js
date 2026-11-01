@@ -67,8 +67,13 @@ export const getQueue = async ({ doctorId, date, actor }) => {
   const { doctor, hospital } = await loadDoctorAndHospital(doctorId);
   const day = date || clinicDate(hospital.timezone);
   // Staff see real names; everyone else gets the masked public view.
+  // Only for a doctor in their own scope: any staff login used to get the
+  // real names and phones of another clinic's queue just by naming it.
   const staffRoles = [ROLES.DOCTOR, ROLES.RECEPTIONIST, ROLES.EXEC_ADMIN, ROLES.SUPER_ADMIN];
-  const includePii = Boolean(actor && staffRoles.includes(actor.role));
+  let includePii = Boolean(actor && staffRoles.includes(actor.role));
+  if (includePii) {
+    includePii = await assertDoctorScope(actor, doctor, { selfOnly: false }).then(() => true, () => false);
+  }
   return buildQueueSnapshot(doctor._id, day, { includePii });
 };
 

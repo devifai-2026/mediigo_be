@@ -123,6 +123,10 @@ export const buildQueueSnapshot = async (doctorId, date, { includePii = false } 
       tokenId: String(t._id),
       tokenNumber: t.tokenNumber,
       status: t.status,
+      // Which sitting it is in, so a day's list can be split by sitting.
+      shift: t.shift ?? null,
+      startTime: t.startTime || null,
+      endTime: t.endTime || null,
       // Drives the emergency flag in the roster: the front desk and the doctor
       // both need to see an emergency without opening the row.
       visitType: t.visitType ?? 'fresh',
