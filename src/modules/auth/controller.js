@@ -33,7 +33,7 @@ export const requestOtp = async (req, res) => {
 export const verifyOtp = async (req, res) => {
   const result = await service.verifyOtp({ ...req.body, ...meta(req) });
   setRefreshCookie(res, result.refreshToken);
-  res.json({ ok: true, data: { accessToken: result.accessToken, user: result.user } });
+  res.json({ ok: true, data: { accessToken: result.accessToken, user: result.user, isNew: Boolean(result.isNew) } });
 };
 
 export const staffLogin = async (req, res) => {

@@ -139,7 +139,7 @@ export const requestOtp = async ({ phone, purpose = OTP_PURPOSE.PATIENT_LOGIN, i
 
 const upsertPatientOnFirstLogin = async (digits, name) => {
   const existing = await User.findOne({ phone: digits });
-  if (existing) return existing;
+  if (existing) return { user: existing, created: false };
   const created = await User.create({
     phone: digits,
     name: name || `Patient ${digits.slice(-4)}`,
@@ -153,7 +153,7 @@ const upsertPatientOnFirstLogin = async (digits, name) => {
     { $set: { 'familyMembers.$[m].linkedUserId': created._id } },
     { arrayFilters: [{ 'm.phone': digits }] },
   );
-  return created;
+  return { user: created, created: true };
 };
 
 /**
@@ -196,8 +196,10 @@ export const verifyOtp = async ({ phone, purpose = OTP_PURPOSE.PATIENT_LOGIN, ot
   const digits = last10Digits(phone);
   const claimed = await claimOtp({ digits, purpose, otp });
 
-  const user = claimed.userId
-    ? await User.findById(claimed.userId)
+  // isNew lets the sign-up page tell a returning patient they already had an
+  // account, instead of pretending it just made one.
+  const { user, created: isNew } = claimed.userId
+    ? { user: await User.findById(claimed.userId), created: false }
     : await upsertPatientOnFirstLogin(digits, name);
 
   if (!user || !user.isActive) throw forbidden('This account has been deactivated');
@@ -211,7 +213,7 @@ export const verifyOtp = async ({ phone, purpose = OTP_PURPOSE.PATIENT_LOGIN, ot
     }
   }
 
-  return mintSession(user);
+  return { ...(await mintSession(user)), isNew };
 };
 
 /**
