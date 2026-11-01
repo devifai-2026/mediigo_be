@@ -65,7 +65,7 @@ export const withDoctorTitle = (raw) => {
  * leaves an account nobody can log into. Passing a password avoids that.
  */
 export const approveSubmission = async ({ submissionId, actor, ip, userAgent, password, trialDays }) => {
-  const submission = await OnboardingSubmission.findById(submissionId).select('+loginPasswordHash');
+  const submission = await OnboardingSubmission.findById(submissionId).select('+loginPasswordHash +loginPasswordHashes');
   if (!submission) throw notFound('Submission not found');
   assertSubmissionScope(actor, submission);
 
@@ -84,7 +84,10 @@ export const approveSubmission = async ({ submissionId, actor, ip, userAgent, pa
    * Only a password nobody else knows is returned for handing over; the
    * agent's is already with the clinic, and an OTP login has none.
    */
-  const secretFor = async () => {
+  const secretFor = async (phone) => {
+    // A login's own password, set with the agent, beats the shared one.
+    const own = !password && (submission.loginPasswordHashes || []).find((x) => x.phone === phone);
+    if (own) return { passwordHash: own.hash, tempPassword: null, signIn: 'AGENT_PASSWORD' };
     if (!password && submission.loginMethod === 'OTP') return { passwordHash: null, tempPassword: null, signIn: 'OTP' };
     if (!password && submission.loginPasswordHash) {
       return { passwordHash: submission.loginPasswordHash, tempPassword: null, signIn: 'AGENT_PASSWORD' };
@@ -162,7 +165,7 @@ export const approveSubmission = async ({ submissionId, actor, ip, userAgent, pa
         if (p.primaryContact?.phone) {
           const already = await User.findOne({ phone: p.primaryContact.phone }).session(session);
           if (!already) {
-            const { passwordHash, tempPassword, signIn } = await secretFor();
+            const { passwordHash, tempPassword, signIn } = await secretFor(p.primaryContact.phone);
             await User.create(
               [{
                 phone: p.primaryContact.phone,
@@ -193,7 +196,7 @@ export const approveSubmission = async ({ submissionId, actor, ip, userAgent, pa
           }
           const { phone, email, photo, isClinicAdmin, ...profile } = parsed.data;
           // eslint-disable-next-line no-await-in-loop
-          const { passwordHash, tempPassword, signIn } = await secretFor();
+          const { passwordHash, tempPassword, signIn } = await secretFor(phone);
           const name = withDoctorTitle(profile.name);
           // eslint-disable-next-line no-await-in-loop
           const [user] = await User.create(
@@ -238,7 +241,7 @@ export const approveSubmission = async ({ submissionId, actor, ip, userAgent, pa
         if (hospital.networkState !== NETWORK_STATE.ACTIVE) {
           throw conflict('The parent clinic must be active before adding a doctor');
         }
-        const { passwordHash, tempPassword, signIn } = await secretFor();
+        const { passwordHash, tempPassword, signIn } = await secretFor(p.phone);
         const [user] = await User.create(
           [{
             phone: p.phone, name: withDoctorTitle(p.name), role: ROLES.DOCTOR,
@@ -277,6 +280,7 @@ export const approveSubmission = async ({ submissionId, actor, ip, userAgent, pa
       submission.status = SUBMISSION_STATUS.APPROVED;
       // Every login now holds its own copy; the submission need not keep one.
       submission.loginPasswordHash = null;
+      submission.loginPasswordHashes = [];
       submission.reviewedBy = actor.id;
       submission.reviewedAt = new Date();
       await submission.save({ session });

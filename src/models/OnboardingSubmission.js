@@ -19,6 +19,8 @@ const submissionSchema = new mongoose.Schema(
      */
     loginMethod: { type: String, enum: ['PASSWORD', 'OTP'], default: 'PASSWORD' },
     loginPasswordHash: { type: String, default: null, select: false },
+    // Per-login passwords (a doctor's own), by phone. Same rules as above.
+    loginPasswordHashes: { type: [{ _id: false, phone: String, hash: String }], default: [], select: false },
     documents: [{ kind: String, url: String, uploadedAt: { type: Date, default: Date.now } }],
     // Resolved at submit time. Approval refuses without it — a hospital with no
     // coordinates is invisible to nearby search, so activating one is pointless.

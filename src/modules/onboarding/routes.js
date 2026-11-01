@@ -19,6 +19,12 @@ export const onboardingRoutes = Router();
 const credentials = z.object({
   method: z.enum(['PASSWORD', 'OTP']),
   password: z.string().min(8, 'Password must be at least 8 characters').max(72).optional(),
+  // A login's own password, keyed by its phone, in place of the shared one —
+  // e.g. each doctor choosing theirs on the spot. Stored hashed only.
+  perLogin: z.array(z.object({
+    phone: z.string().regex(/^\d{10}$/, 'Enter a 10-digit mobile number'),
+    password: z.string().min(8, 'Password must be at least 8 characters').max(72),
+  })).max(20).optional(),
 }).optional();
 
 const createSchema = {

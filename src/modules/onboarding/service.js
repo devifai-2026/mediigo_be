@@ -18,6 +18,11 @@ const applyCredentials = async (sub, credentials) => {
   sub.loginMethod = credentials.method;
   if (credentials.method === 'OTP') sub.loginPasswordHash = null;
   else if (credentials.password) sub.loginPasswordHash = await hashPassword(credentials.password);
+  if (credentials.perLogin) {
+    sub.loginPasswordHashes = await Promise.all(
+      credentials.perLogin.map(async ({ phone, password }) => ({ phone, hash: await hashPassword(password) })),
+    );
+  }
 };
 
 export const create = async ({ body, actor }) => {
@@ -46,6 +51,7 @@ export const create = async ({ body, actor }) => {
   await sub.save();
   const out = sub.toObject();
   delete out.loginPasswordHash;
+  delete out.loginPasswordHashes;
   return out;
 };
 
@@ -62,6 +68,7 @@ export const update = async ({ id, body, actor }) => {
   await sub.save();
   const out = sub.toObject();
   delete out.loginPasswordHash;
+  delete out.loginPasswordHashes;
   return out;
 };
 
