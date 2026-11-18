@@ -339,10 +339,17 @@ export const setBookingOpen = async ({ doctorId, isOpen, actor }) => {
 };
 
 /**
- * Patient app booking — unpaid, so no Transaction. Uses the same counter
- * allocation and retry loop as the POS.
+ * Patient app booking — the consultation is unpaid, so no Transaction. Uses
+ * the same counter allocation and retry loop as the POS.
+ *
+ * dryRun runs every check a real booking would (clinic active, sitting open,
+ * token free, no duplicate) and stops before allocating. The online booking
+ * fee calls it before taking money, so a patient is not charged for a booking
+ * that was always going to be refused.
+ *
+ * bookingFee, when given, records the online fee already paid for this token.
  */
-export const bookToken = async ({ doctorId, patientId, familyMemberId, visitType = 'fresh', date: wantedDate, shift: wantedShift, tokenNumber: wantedNumber, complaint, conditions, actor }) => {
+export const bookToken = async ({ doctorId, patientId, familyMemberId, visitType = 'fresh', date: wantedDate, shift: wantedShift, tokenNumber: wantedNumber, complaint, conditions, actor, dryRun = false, bookingFee = null }) => {
   const { doctor, hospital } = await loadDoctorAndHospital(doctorId);
   if (hospital.networkState !== NETWORK_STATE.ACTIVE) {
     throw conflict('This clinic is not accepting bookings', RESPONSE_CODES.HOSPITAL_NOT_ACTIVE);
@@ -393,6 +400,11 @@ export const bookToken = async ({ doctorId, patientId, familyMemberId, visitType
     ? (patient.familyMembers || []).find((m) => String(m._id) === String(familyMemberId))
     : null;
 
+  if (dryRun) {
+    await assertNoOpenToken({ doctorId: doctor._id, date, patientId: patient._id, familyMemberId: member?._id ?? null });
+    return { ok: true, date, shift };
+  }
+
   const created = await allocateToken({
     doctor, hospital, date, shift, fixedNumber,
     fields: {
@@ -416,6 +428,7 @@ export const bookToken = async ({ doctorId, patientId, familyMemberId, visitType
       visitType, source: TOKEN_SOURCE.APP, status: TOKEN_STATUS.WAITING,
       statusHistory: [{ from: null, to: TOKEN_STATUS.WAITING, at: new Date(), byUserId: actor?.id }],
       isPaid: false, bookedBy: actor?.id ?? patient._id,
+      bookingFee: bookingFee ?? null,
     },
   });
 

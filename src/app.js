@@ -75,7 +75,15 @@ export const createApp = () => {
     res.set('Cache-Control', 'no-store');
     next();
   });
-  app.use(express.json({ limit: '1mb' }));
+  app.use(express.json({
+    limit: '1mb',
+    // Cashfree signs the webhook body byte-for-byte, so its verifier needs the
+    // raw text; re-serialising the parsed JSON would not match. Kept only for
+    // that one path.
+    verify: (req, _res, buf) => {
+      if (req.originalUrl.startsWith('/api/payments/cashfree/webhook')) req.rawBody = buf.toString('utf8');
+    },
+  }));
   app.use(express.urlencoded({ extended: true }));
   app.use(cookieParser());
 

@@ -16,6 +16,7 @@ import * as staff from './staff.js';
 import * as patients from './patients.js';
 import * as billing from './billing.js';
 import { setBillingOverride } from '../../services/trials.js';
+import * as payments from '../../services/bookingPayments.js';
 
 export const superadminRoutes = Router();
 superadminRoutes.use(requireAuth, asyncHandler(requireActiveUser), requireRole(ROLES.SUPER_ADMIN));
@@ -291,6 +292,48 @@ superadminRoutes.post(
     res.json({ ok: true, data: { provider: settings.enabled ? settings.provider : 'console', ...result } });
   }),
 );
+
+// ---- Payment gateway (Cashfree) for the online booking fee ----
+// Keys go in, never come out: reads return only whether a key is saved and
+// its last four characters. They are stored encrypted (lib/secretBox.js).
+const cashfreeKeys = z.object({
+  appId: z.string().trim().max(200).optional(),
+  secretKey: z.string().trim().max(400).optional(),
+}).optional();
+
+superadminRoutes.get('/payment-settings', asyncHandler(async (_req, res) => {
+  res.json({ ok: true, data: await payments.readPaymentSettings() });
+}));
+
+superadminRoutes.put(
+  '/payment-settings',
+  forbidImpersonation,
+  validate({
+    body: z.object({
+      enabled: z.boolean().optional(),
+      mode: z.enum(['sandbox', 'production']).optional(),
+      // ₹1 minimum (Cashfree's floor), ₹10,000 ceiling against a fat-fingered extra zero.
+      bookingFeePaise: z.coerce.number().int().min(100).max(1_000_000).optional(),
+      sandbox: cashfreeKeys,
+      production: cashfreeKeys,
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    res.json({ ok: true, data: await payments.updatePaymentSettings({ patch: req.body, actor: req.user, ip: req.ip, userAgent: req.get('user-agent') }) });
+  }),
+);
+
+superadminRoutes.post(
+  '/payment-settings/test',
+  validate({ body: z.object({ mode: z.enum(['sandbox', 'production']) }) }),
+  asyncHandler(async (req, res) => {
+    res.json({ ok: true, data: await payments.testCredentials({ mode: req.body.mode }) });
+  }),
+);
+
+superadminRoutes.get('/payment-settings/payments', asyncHandler(async (_req, res) => {
+  res.json({ ok: true, data: await payments.recentPayments({ limit: 50 }) });
+}));
 
 // ---- Platform metrics ----
 superadminRoutes.get('/metrics', asyncHandler(async (req, res) => {

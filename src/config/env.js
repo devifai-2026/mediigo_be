@@ -37,6 +37,12 @@ const schema = z.object({
   JWT_ACCESS_TTL_MINUTES: intFrom(60),
   JWT_REFRESH_TTL_DAYS: intFrom(30),
   AADHAAR_HASH_PEPPER: z.string().min(32, 'AADHAAR_HASH_PEPPER must be at least 32 characters'),
+  // Master key that encrypts payment-gateway credentials at rest (see
+  // lib/secretBox.js). Optional so the app boots without payments set up;
+  // saving Cashfree keys from Super Admin refuses until it is set. Rotating it
+  // makes the stored keys unreadable — re-enter them in Super Admin after.
+  PAYMENT_KEYS_SECRET: z.string().default('')
+    .refine((v) => v === '' || v.length >= 32, 'PAYMENT_KEYS_SECRET must be at least 32 characters'),
 
   OTP_DEMO: boolLike.default(true),
   OTP_DEMO_CODE: z.string().default('1234'),

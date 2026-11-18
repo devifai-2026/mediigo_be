@@ -24,6 +24,8 @@ export { PatientPhoto, PATIENT_PHOTO_KIND } from './PatientPhoto.js';
 export { PettyExpense } from './PettyExpense.js';
 export { ClinicLead, LEAD_STAGE, VISIT_OUTCOME } from './ClinicLead.js';
 export { DoctorEnquiry, ENQUIRY_STATUS } from './DoctorEnquiry.js';
+export { PaymentSettings } from './PaymentSettings.js';
+export { BookingPayment } from './BookingPayment.js';
 
 import { User } from './User.js';
 import { District } from './District.js';
@@ -49,12 +51,15 @@ import { PatientPhoto } from './PatientPhoto.js';
 import { PettyExpense } from './PettyExpense.js';
 import { ClinicLead } from './ClinicLead.js';
 import { DoctorEnquiry } from './DoctorEnquiry.js';
+import { PaymentSettings } from './PaymentSettings.js';
+import { BookingPayment } from './BookingPayment.js';
 
 export const allModels = [
   User, District, Hospital, Doctor, Specialty, QRStandee, OPDToken, Transaction,
   PatientPolicy, OnboardingSubmission, AuditLog, OtpVerification,
   WaSettings, Counter, DistanceCache, Ticket, BillingSettings, BillingCharge, Review,
   Prescription, PettyExpense, ClinicLead, DoctorEnquiry, PatientPhoto,
+  PaymentSettings, BookingPayment,
 ];
 
 export const syncAllIndexes = async () => {

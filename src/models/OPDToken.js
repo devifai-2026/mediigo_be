@@ -118,7 +118,25 @@ const opdTokenSchema = new mongoose.Schema(
     followUpTokenId: { type: mongoose.Schema.Types.ObjectId, ref: 'OPDToken', default: null },
 
     transactionId: { type: mongoose.Schema.Types.ObjectId, ref: 'Transaction', default: null },
+    // The CONSULTATION fee, collected at the desk. Not the online booking fee.
     isPaid: { type: Boolean, default: false },
+    /**
+     * The online booking fee the patient paid Mediigo to book this token, via
+     * Cashfree. Kept apart from isPaid/transactionId on purpose: it is
+     * Mediigo's money, not the clinic's, and paying it does not settle the
+     * consultation. Null on tokens booked while the fee was off, and on every
+     * desk/walk-in token.
+     */
+    bookingFee: {
+      type: new mongoose.Schema({
+        amountPaise: Number,
+        orderId: String,
+        cfPaymentId: String,
+        mode: String,
+        paidAt: Date,
+      }, { _id: false }),
+      default: null,
+    },
     bookedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   },
   { timestamps: true },

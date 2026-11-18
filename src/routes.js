@@ -15,6 +15,7 @@ import { reviewRoutes } from './modules/reviews/routes.js';
 import { prescriptionRoutes } from './modules/prescriptions/routes.js';
 import { pharmacyRoutes } from './modules/pharmacy/routes.js';
 import { enquiryRoutes } from './modules/enquiries/routes.js';
+import { paymentRoutes } from './modules/payments/routes.js';
 
 // Single mount point for every route in the app.
 export const mountRoutes = (app) => {
@@ -24,6 +25,8 @@ export const mountRoutes = (app) => {
   app.use('/api/doctors', doctorRoutes);
   app.use('/api/specialties', specialtyRoutes);
   app.use('/api/queue', queueRoutes);
+  // Online booking fee (Cashfree), including its webhook.
+  app.use('/api/payments', paymentRoutes);
   app.use('/api/pos', posRoutes);
   app.use('/api/policy', policyRoutes);
   app.use('/api/onboarding', onboardingRoutes);

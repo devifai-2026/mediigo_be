@@ -188,6 +188,32 @@ export const RESPONSE_CODES = {
   IN_FLIGHT_TOKENS: 'IN_FLIGHT_TOKENS',
   ILLEGAL_TRANSITION: 'ILLEGAL_TRANSITION',
   GONE: 'GONE',
+  // Online booking fee
+  PAYMENT_REQUIRED: 'PAYMENT_REQUIRED',
+  PAYMENTS_NOT_CONFIGURED: 'PAYMENTS_NOT_CONFIGURED',
+  PAYMENT_GATEWAY_ERROR: 'PAYMENT_GATEWAY_ERROR',
+};
+
+/**
+ * Where an online booking-fee payment stands. The token is created only once
+ * the money is confirmed, so these track the order, not the token.
+ *
+ *   CREATED        — Cashfree order made, patient has not paid yet
+ *   PROCESSING     — payment confirmed, the token is being created
+ *   BOOKED         — paid and the token exists (tokenId is set)
+ *   REFUNDED       — paid, but the token could not be created (slot taken
+ *                    meanwhile, etc.); Cashfree accepted the refund. The money
+ *                    reaches the patient on the bank's timeline, not instantly.
+ *   REFUND_FAILED  — paid, booking failed AND the refund call failed: needs a human
+ *   EXPIRED        — the order lapsed unpaid
+ */
+export const BOOKING_PAYMENT_STATUS = {
+  CREATED: 'CREATED',
+  PROCESSING: 'PROCESSING',
+  BOOKED: 'BOOKED',
+  REFUNDED: 'REFUNDED',
+  REFUND_FAILED: 'REFUND_FAILED',
+  EXPIRED: 'EXPIRED',
 };
 
 export const SOCKET_EVENTS = {
@@ -229,6 +255,9 @@ export const AUDIT_ACTIONS = {
   STANDEE_DEPLOYED: 'STANDEE_DEPLOYED',
   STANDEE_RECLAIMED: 'STANDEE_RECLAIMED',
   WA_SETTINGS_UPDATED: 'WA_SETTINGS_UPDATED',
+  PAYMENT_SETTINGS_UPDATED: 'PAYMENT_SETTINGS_UPDATED',
+  BOOKING_FEE_PAID: 'BOOKING_FEE_PAID',
+  BOOKING_FEE_REFUNDED: 'BOOKING_FEE_REFUNDED',
   SECURITY_POLICY_UPDATED: 'SECURITY_POLICY_UPDATED',
   USER_CREATED: 'USER_CREATED',
   USER_DEACTIVATED: 'USER_DEACTIVATED',

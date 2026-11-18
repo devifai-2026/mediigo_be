@@ -1,5 +1,6 @@
 import * as service from './service.js';
 import { rescheduleOptions, rescheduleToken } from '../../services/absence.js';
+import { assertNoFeeRequired } from '../../services/bookingPayments.js';
 
 export const getQueue = async (req, res) => {
   const data = await service.getQueue({ doctorId: req.params.doctorId, date: req.query.date, actor: req.user });
@@ -57,6 +58,9 @@ export const setBookingOpen = async (req, res) => {
 };
 
 export const book = async (req, res) => {
+  // While the online booking fee is on, patients book through
+  // /api/payments/booking/order instead; this keeps the fee from being skipped.
+  await assertNoFeeRequired();
   const data = await service.bookToken({
     doctorId: req.body.doctorId,
     patientId: req.user.id,
